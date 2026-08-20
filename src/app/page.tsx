@@ -1,69 +1,100 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import Link from "next/link";
+import { useSnapshot, api } from "@/lib/client";
+import { useState } from "react";
+
+const SURFACES = [
+  { href: "/order", label: "Customer", role: "Phone", detail: "Order from a gate seat. Scan-to-order, tracking, handover code.", colour: "var(--color-accent)" },
+  { href: "/merchant", label: "Merchant", role: "Tablet", detail: "Back of house. Catalogue, order queue, prepare, load compartment.", colour: "var(--color-slate)" },
+  { href: "/ops", label: "Operations", role: "Laptop", detail: "Live fleet map, missions, incidents, emergency hold, demo controls.", colour: "var(--color-plum)" },
+  { href: "/robot/SB-01", label: "Robot screen", role: "Second tablet", detail: "Ad loop in transit, code entry on arrival, compartment release.", colour: "var(--color-signal)" },
+];
+
+export default function Launcher() {
+  const { snap, connected } = useSnapshot();
+  const [busy, setBusy] = useState(false);
+
+  const reset = async () => {
+    setBusy(true);
+    try { await api("/api/demo", { action: "reset" }); } finally { setBusy(false); }
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <main className="min-h-screen mx-auto max-w-5xl px-6 py-12">
+      <div className="eyebrow">Demo launcher · Franjo Tuđman Airport (ZAG)</div>
+      <h1 className="mt-3 text-4xl sm:text-5xl font-bold tracking-tight leading-none">
+        Gate Delivery
+      </h1>
+      <p className="mt-4 max-w-2xl text-ink-2 leading-relaxed">
+        Open each surface on its own device. They share one live state — accept an order
+        on the merchant tablet and the passenger&rsquo;s phone updates in the same second.
+      </p>
+
+      <div className="mt-6 flex flex-wrap items-center gap-3 text-sm">
+        <span className="mono inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1">
+          <span className={`inline-block h-2 w-2 rounded-full ${connected ? "bg-accent" : "bg-alert"}`} />
+          {connected ? "live" : "reconnecting"}
+        </span>
+        {snap && (
+          <>
+            <span className="mono rounded-full border border-line bg-surface px-3 py-1">
+              {snap.orders.length} orders
+            </span>
+            <span className="mono rounded-full border border-line bg-surface px-3 py-1">
+              {snap.units.length} units
+            </span>
+          </>
+        )}
+        <button
+          onClick={reset}
+          disabled={busy}
+          className="mono rounded-full border border-line bg-surface px-3 py-1 hover:border-ink disabled:opacity-50"
+        >
+          {busy ? "resetting…" : "reset scenario"}
+        </button>
+      </div>
+
+      <div className="mt-10 grid gap-4 sm:grid-cols-2">
+        {SURFACES.map((s) => (
+          <Link
+            key={s.href}
+            href={s.href}
+            className="group rounded-lg border border-line bg-surface p-5 transition hover:border-ink"
+            style={{ borderTopWidth: 3, borderTopColor: s.colour }}
           >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+            <div className="flex items-baseline justify-between">
+              <h2 className="text-lg font-semibold">{s.label}</h2>
+              <span className="eyebrow">{s.role}</span>
+            </div>
+            <p className="mt-2 text-sm text-ink-2 leading-relaxed">{s.detail}</p>
+            <div className="mono mt-3 text-xs text-muted group-hover:text-ink">{s.href} →</div>
+          </Link>
+        ))}
+      </div>
+
+      <section className="mt-12 rounded-lg border border-line bg-surface-2 p-5">
+        <div className="eyebrow">Say this out loud in the demo</div>
+        <ul className="mt-3 grid gap-2 text-sm text-ink-2 sm:grid-cols-2">
+          <li><strong className="text-ink">Simulated:</strong> the robot, the flight board, payments.</li>
+          <li><strong className="text-ink">Reconstructed:</strong> gate layout and walking distances — pending an MZLZ survey.</li>
+          <li><strong className="text-ink">Out of scope:</strong> live FIDS, fiscalisation, POS, Wi-Fi location, media booking.</li>
+          <li><strong className="text-ink">Real:</strong> everything else — state machine, acceptance engine, cross-device sync.</li>
+        </ul>
+      </section>
+
+      <section className="mt-6 rounded-lg border border-line bg-surface p-5">
+        <div className="eyebrow">Seven-minute script</div>
+        <ol className="mono mt-3 space-y-1.5 text-xs text-ink-2">
+          <li>1 — Phone: scan gate 7, pick flight OU 654, order a cappuccino and a toastie.</li>
+          <li>2 — Point out the spirits marked <em>collect in store</em>: the catalogue enforces the age rule.</li>
+          <li>3 — Merchant tablet: the order is already there. Accept → Ready → Load compartment.</li>
+          <li>4 — Robot screen plays its ad loop while it drives. Phone shows a live ETA.</li>
+          <li>5 — Ops console: inject a gate change. Watch it reroute and notify the passenger.</li>
+          <li>6 — Robot arrives. Enter the code. Compartment opens.</li>
+          <li>7 — Order against LH 1727 (boards in 12 min) — refused, store collection offered.</li>
+        </ol>
+      </section>
+    </main>
   );
 }
