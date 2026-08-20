@@ -24,8 +24,15 @@ Then open the launcher at **http://localhost:3000** — it lists every surface.
 | Operations | `/ops` | Laptop |
 | Robot screen | `/robot/SB-01` | Second tablet |
 
-To run it across real devices on the same Wi-Fi, use the network address that
-`npm run dev` prints instead of `localhost`.
+### Across real devices
+
+`npm run dev` prints a **Network:** address (e.g. `http://172.20.10.4:3000`).
+Use that instead of `localhost` on your phone and tablets, with every device on
+the same network. A phone hotspot works well and is more reliable than venue
+Wi-Fi.
+
+macOS may prompt to allow incoming connections the first time — accept it, or
+the other devices will not reach the server.
 
 **The demo lands when the surfaces are on separate screens.** Accept an order on
 the merchant tablet and the passenger's phone updates in the same second — that
@@ -37,6 +44,27 @@ Everything runs locally with no external service. The one exception is the
 **first** `npm run dev`, which fetches the Archivo and IBM Plex Mono webfonts
 and then self-hosts them. Start it once with a connection; after that it runs in
 airplane mode.
+
+### Do not deploy this to Vercel or any serverless platform
+
+It will build and then behave incorrectly. Three structural reasons:
+
+- The engine is a **singleton on `globalThis`** (`src/server/engine.ts`).
+  Serverless runs isolated instances, so two devices can land on different
+  instances holding different state — which destroys the one thing the demo
+  exists to prove.
+- The simulation is driven by a **`setInterval` tick loop**. Serverless
+  functions freeze once a response is sent, so the units barely move.
+- Order tracking uses **SSE**, which needs a long-lived connection. Serverless
+  execution limits cut the stream repeatedly.
+
+This is a deliberate trade, not a defect: the demo is specified to run as one
+process with one command and no internet. If you ever do need a shareable URL,
+deploy to a host that runs a **persistent Node process** — Render, Railway,
+Fly.io or a VPS — where `npm run build && npm start` works unchanged. Production
+solves this properly per `Project_plan.md`: Postgres behind the repository
+interfaces, and the fleet controller on-site at MZLZ rather than in a cloud
+function.
 
 ---
 
