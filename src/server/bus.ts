@@ -14,6 +14,8 @@ export class EventBus {
       try {
         fn(payload);
       } catch {
+        // A listener that throws is a stream that has gone away. Drop it
+        // rather than fanning out to it forever.
         this.listeners.delete(fn);
       }
     }
