@@ -14,10 +14,14 @@ const SURFACES = [
 export default function Launcher() {
   const { snap, connected } = useSnapshot();
   const [busy, setBusy] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
 
+  // Reset wipes every order in the system. Mid-demo that is unrecoverable, so
+  // it never happens on a single tap.
   const reset = async () => {
     setBusy(true);
-    try { await api("/api/demo", { action: "reset" }); } finally { setBusy(false); }
+    try { await api("/api/demo", { action: "reset" }); }
+    finally { setBusy(false); setConfirmReset(false); }
   };
 
   return (
@@ -47,13 +51,36 @@ export default function Launcher() {
           </>
         )}
         <button
-          onClick={reset}
+          onClick={() => setConfirmReset(true)}
           disabled={busy}
           className="mono rounded-full border border-line bg-surface px-3 py-1 hover:border-ink disabled:opacity-50"
         >
           {busy ? "resetting…" : "reset scenario"}
         </button>
       </div>
+
+      {confirmReset && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-ink/40 p-5">
+          <div className="w-full max-w-sm rounded-xl bg-surface p-5">
+            <h2 className="text-lg font-bold">Reset the scenario?</h2>
+            <p className="mt-1.5 text-sm text-ink-2">
+              This deletes every order in the system and rebuilds the flight board. Any order open
+              on a phone or tablet will disappear. There is no undo.
+            </p>
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <button onClick={() => setConfirmReset(false)}
+                      className="rounded-lg border border-line py-3 font-semibold">
+                Cancel
+              </button>
+              <button onClick={reset} disabled={busy}
+                      className="rounded-lg py-3 font-semibold text-white disabled:opacity-50"
+                      style={{ background: "var(--color-alert)" }}>
+                {busy ? "Resetting…" : "Reset everything"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mt-10 grid gap-4 sm:grid-cols-2">
         {SURFACES.map((s) => (

@@ -7,7 +7,7 @@ import { STATE_COPY, progressOf } from "@/domain/orders/machine";
 import { TerminalMap } from "@/components/TerminalMap";
 import type { Flight, Merchant, Order, Product, Waypoint } from "@/domain/types";
 
-type Step = "flight" | "shops" | "menu" | "cart" | "tracking";
+type Step = "flight" | "shops" | "menu" | "cart" | "orders" | "tracking";
 type Cart = Record<string, number>;
 
 interface Quote {
@@ -20,90 +20,128 @@ interface Quote {
   promise: { deliverBy: number };
 }
 
+interface Confirmation {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+}
+
 const LS_KEY = "gate-delivery-session";
+const LIVE = ["DRAFT", "VALIDATED", "AUTHORIZED", "SENT_TO_MERCHANT", "ACCEPTED",
+  "PREPARING", "READY", "ROBOT_ASSIGNED", "AT_MERCHANT", "LOADED", "IN_TRANSIT",
+  "ARRIVED", "NO_SHOW"];
+
+interface Session {
+  orderIds?: string[];
+  flightId?: string | null;
+  waypointId?: string | null;
+  activeOrderId?: string | null;
+  step?: Step;
+}
+
+function readSession(): Session {
+  if (typeof window === "undefined") return {};
+  try {
+    return JSON.parse(localStorage.getItem(LS_KEY) ?? "{}") as Session;
+  } catch {
+    return {};
+  }
+}
 
 export function OrderApp({ initialWaypointId }: { initialWaypointId?: string }) {
   const { snap, connected } = useSnapshot();
   const now = useNow();
 
-  const [step, setStep] = useState<Step>("flight");
-  const [flightId, setFlightId] = useState<string | null>(null);
-  const [pickedWaypointId, setPickedWaypointId] = useState<string | null>(initialWaypointId ?? null);
+  // Hydrated from localStorage on first render so a refresh, a tab switch or a
+  // dropped connection never loses an order the passenger has already paid for.
+  const [session] = useState<Session>(readSession);
+  const [step, setStep] = useState<Step>(() => {
+    if (initialWaypointId && !session.orderIds?.length) return session.flightId ? "shops" : "flight";
+    if (session.step && session.orderIds?.length) return session.step;
+    if (session.orderIds?.length) return "orders";
+    return session.flightId ? "shops" : "flight";
+  });
+  const [flightId, setFlightId] = useState<string | null>(session.flightId ?? null);
+  const [waypointId, setWaypointId] = useState<string | null>(
+    initialWaypointId ?? session.waypointId ?? null,
+  );
+  const [orderIds, setOrderIds] = useState<string[]>(session.orderIds ?? []);
+  const [activeOrderId, setActiveOrderId] = useState<string | null>(session.activeOrderId ?? null);
+
   const [merchantId, setMerchantId] = useState<string | null>(null);
   const [cart, setCart] = useState<Cart>({});
-  const [orderId, setOrderId] = useState<string | null>(null);
-  const [quote, setQuote] = useState<Quote | null>(null);
+  const [quoteResult, setQuoteResult] = useState<Quote | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
   const [pickingPoint, setPickingPoint] = useState(false);
+  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
 
-  /* Restore a session so a refresh mid-demo doesn't lose the order.
-   * This reads an external system (localStorage) exactly once on mount and
-   * cannot run during SSR, so an effect is the correct place for it. */
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      if (!raw) return;
-      const s = JSON.parse(raw) as { orderId?: string; flightId?: string; waypointId?: string };
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot hydration from localStorage
-      if (s.orderId) { setOrderId(s.orderId); setStep("tracking"); }
-      if (s.flightId) setFlightId(s.flightId);
-      if (s.waypointId && !initialWaypointId) setPickedWaypointId(s.waypointId);
-    } catch { /* keep defaults */ }
-  }, [initialWaypointId]);
+    localStorage.setItem(
+      LS_KEY,
+      JSON.stringify({ orderIds, flightId, waypointId, activeOrderId, step } satisfies Session),
+    );
+  }, [orderIds, flightId, waypointId, activeOrderId, step]);
 
   const flight = useMemo(
-    () => snap?.flights.find((f) => f.id === flightId) ?? null,
-    [snap, flightId],
-  );
-  const order = useMemo(
-    () => snap?.orders.find((o) => o.id === orderId) ?? null,
-    [snap, orderId],
-  );
-  /* The gate on the boarding pass supplies a default delivery point. A QR
-   * scan or an explicit pick always wins — derived, never stored twice. */
-  const gateWaypointId = useMemo(() => {
+    () => snap?.flights.find((f) => f.id === flightId) ?? null, [snap, flightId]);
+  const waypoint = useMemo(
+    () => snap?.waypoints.find((w) => w.id === waypointId) ?? null, [snap, waypointId]);
+  const merchant = useMemo(
+    () => snap?.merchants.find((m) => m.id === merchantId) ?? null, [snap, merchantId]);
+
+  const myOrders = useMemo(() => {
+    if (!snap) return [];
+    return orderIds
+      .map((id) => snap.orders.find((o) => o.id === id))
+      .filter((o): o is Order => Boolean(o));
+  }, [snap, orderIds]);
+
+  const liveOrders = myOrders.filter((o) => LIVE.includes(o.state));
+  const activeOrder = myOrders.find((o) => o.id === activeOrderId) ?? null;
+  // Orders the phone remembers but the server no longer has — the scenario was
+  // reset from the ops console. Surfaced, never a blank screen.
+  const missingCount = orderIds.length - myOrders.length;
+
+  /* the gate on the boarding pass pre-fills the delivery point */
+  const derivedWaypointId = useMemo(() => {
+    if (waypointId) return waypointId;
     if (!snap || !flight) return null;
     return snap.waypoints.find((w) => w.kind === "gate" && w.gate === flight.gate)?.id ?? null;
-  }, [snap, flight]);
+  }, [snap, flight, waypointId]);
+  const effectiveWaypoint = waypoint
+    ?? snap?.waypoints.find((w) => w.id === derivedWaypointId)
+    ?? null;
 
-  const waypointId = pickedWaypointId ?? gateWaypointId;
-
-  const waypoint = useMemo(
-    () => snap?.waypoints.find((w) => w.id === waypointId) ?? null,
-    [snap, waypointId],
-  );
-  const merchant = useMemo(
-    () => snap?.merchants.find((m) => m.id === merchantId) ?? null,
-    [snap, merchantId],
+  const canQuote = Boolean(
+    merchantId && flightId && derivedWaypointId && Object.keys(cart).length > 0,
   );
 
+  /* live quote whenever the cart or destination moves */
   useEffect(() => {
-    localStorage.setItem(LS_KEY, JSON.stringify({ orderId, flightId, waypointId }));
-  }, [orderId, flightId, waypointId]);
-
-
-  const quotable = Boolean(merchantId && flightId && waypointId && Object.keys(cart).length > 0);
-
-  /* Live quote whenever the cart or destination moves. setState happens in an
-   * async callback, not in the effect body, so no cascading render. */
-  useEffect(() => {
-    if (!quotable) return;
+    if (!canQuote) return;
     const lines = Object.entries(cart).map(([productId, qty]) => ({ productId, qty }));
     let cancelled = false;
-    api<Quote>("/api/quote", { merchantId, lines, flightId, deliveryWaypointId: waypointId })
-      .then((q) => { if (!cancelled) setQuote(q); })
-      .catch(() => { if (!cancelled) setQuote(null); });
+    api<Quote>("/api/quote", {
+      merchantId, lines, flightId, deliveryWaypointId: derivedWaypointId,
+    })
+      .then((q) => { if (!cancelled) setQuoteResult(q); })
+      .catch(() => { if (!cancelled) setQuoteResult(null); });
     return () => { cancelled = true; };
-  }, [quotable, cart, merchantId, flightId, waypointId]);
+  }, [canQuote, cart, merchantId, flightId, derivedWaypointId]);
 
-  /* A stale quote must never be shown against an empty cart. */
-  const activeQuote = quotable ? quote : null;
+  // Derived, not stored: an empty basket has no quote by definition, so there
+  // is nothing to reset when the inputs go away.
+  const quote = canQuote ? quoteResult : null;
 
   if (!snap) {
     return (
       <div className="grid min-h-screen place-items-center bg-ground">
-        <div className="eyebrow">connecting…</div>
+        <div className="text-center">
+          <div className="eyebrow">connecting…</div>
+          <p className="mt-2 text-sm text-muted">Reconnecting automatically.</p>
+        </div>
       </div>
     );
   }
@@ -121,15 +159,17 @@ export function OrderApp({ initialWaypointId }: { initialWaypointId?: string }) 
     });
 
   const place = async () => {
-    if (!merchantId || !flightId || !waypointId) return;
+    if (!merchantId || !flightId || !derivedWaypointId) return;
     setPlacing(true); setError(null);
     try {
       const lines = Object.entries(cart).map(([productId, qty]) => ({ productId, qty }));
       const res = await api<{ order: Order }>("/api/order", {
-        merchantId, lines, flightId, deliveryWaypointId: waypointId,
+        merchantId, lines, flightId, deliveryWaypointId: derivedWaypointId,
       });
-      setOrderId(res.order.id);
+      setOrderIds((ids) => [res.order.id, ...ids]);
+      setActiveOrderId(res.order.id);
       setCart({});
+      setMerchantId(null);
       setStep("tracking");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
@@ -138,20 +178,36 @@ export function OrderApp({ initialWaypointId }: { initialWaypointId?: string }) 
     }
   };
 
-  const startOver = () => {
-    setOrderId(null); setCart({}); setMerchantId(null); setStep("shops"); setError(null);
+  // Changing the flight is destructive to the current basket and re-anchors the
+  // delivery point, so it is confirmed — and blocked outright while an order is
+  // in flight, because there is no version of that action a passenger wants.
+  const requestFlightChange = () => {
+    if (liveOrders.length > 0) return;
+    setConfirmation({
+      title: "Change flight?",
+      body: "This clears your basket and resets the delivery point. Orders you have already placed are kept.",
+      confirmLabel: "Change flight",
+      onConfirm: () => {
+        setStep("flight");
+        setCart({});
+        setMerchantId(null);
+        setWaypointId(null);
+        setConfirmation(null);
+      },
+    });
   };
 
-  /* ------------------------------------------------------------------ */
+  const showNav = step !== "flight";
 
   return (
-    <main className="mx-auto min-h-screen max-w-md bg-ground pb-28">
+    <main className="mx-auto min-h-screen max-w-md bg-ground" style={{ paddingBottom: showNav ? 132 : 24 }}>
       <Header
         flight={flight}
-        waypoint={waypoint}
+        waypoint={effectiveWaypoint}
         now={now}
         connected={connected}
-        onChangeFlight={() => { setStep("flight"); setOrderId(null); }}
+        locked={liveOrders.length > 0}
+        onChangeFlight={requestFlightChange}
       />
 
       {step === "flight" && (
@@ -160,6 +216,7 @@ export function OrderApp({ initialWaypointId }: { initialWaypointId?: string }) 
           now={now}
           onPick={(f) => {
             setFlightId(f.id);
+            if (!initialWaypointId) setWaypointId(null);
             setStep("shops");
           }}
         />
@@ -171,88 +228,190 @@ export function OrderApp({ initialWaypointId }: { initialWaypointId?: string }) 
           products={snap.products}
           onPick={(m) => { setMerchantId(m.id); setStep("menu"); }}
           onChangePoint={() => setPickingPoint(true)}
-          waypoint={waypoint}
+          waypoint={effectiveWaypoint}
         />
       )}
 
       {step === "menu" && merchant && (
         <Menu
-          merchant={merchant}
-          products={products}
-          cart={cart}
-          onAdd={add}
-          onRemove={remove}
-          onBack={() => setStep("shops")}
+          merchant={merchant} products={products} cart={cart}
+          onAdd={add} onRemove={remove} onBack={() => setStep("shops")}
         />
       )}
 
       {step === "cart" && merchant && (
         <CartView
-          merchant={merchant}
-          products={snap.products}
-          cart={cart}
-          quote={activeQuote}
-          waypoint={waypoint}
-          now={now}
-          error={error}
-          placing={placing}
-          onAdd={add}
-          onRemove={remove}
+          merchant={merchant} products={snap.products} cart={cart} quote={quote}
+          waypoint={effectiveWaypoint} now={now} error={error} placing={placing}
+          onAdd={add} onRemove={remove}
           onChangePoint={() => setPickingPoint(true)}
           onBack={() => setStep("menu")}
           onPlace={place}
         />
       )}
 
-      {step === "tracking" && order && (
-        <Tracking
-          order={order}
+      {step === "orders" && (
+        <OrdersList
+          orders={myOrders}
           snap={snap}
           now={now}
-          onStartOver={startOver}
+          missingCount={missingCount}
+          onOpen={(o) => { setActiveOrderId(o.id); setStep("tracking"); }}
+          onForget={() => setOrderIds(myOrders.map((o) => o.id))}
+          onShop={() => setStep("shops")}
         />
       )}
 
-      {step === "tracking" && !order && (
-        <div className="px-5 py-10 text-center">
-          <p className="text-ink-2">That order is no longer in the system.</p>
-          <button onClick={startOver} className="mt-4 rounded-lg bg-accent px-5 py-3 font-semibold text-white">
-            Start a new order
+      {step === "tracking" && activeOrder && (
+        <Tracking
+          order={activeOrder} snap={snap} now={now}
+          onBack={() => setStep("orders")}
+          onShopAgain={() => { setMerchantId(null); setStep("shops"); }}
+        />
+      )}
+
+      {step === "tracking" && !activeOrder && (
+        <section className="px-5 py-10 text-center">
+          <div className="text-4xl">🔍</div>
+          <h1 className="mt-3 text-xl font-bold">That order isn&rsquo;t on this system</h1>
+          <p className="mt-2 text-sm text-ink-2">
+            The demo scenario was probably reset. Your other orders are unaffected.
+          </p>
+          <button
+            onClick={() => setStep("orders")}
+            className="mt-5 w-full rounded-lg py-3.5 font-semibold text-white"
+            style={{ background: "var(--color-accent)" }}
+          >
+            Back to my orders
           </button>
-        </div>
+        </section>
       )}
 
-      {pickingPoint && waypoint && (
+      {pickingPoint && effectiveWaypoint && (
         <PointPicker
-          snap={snap}
-          current={waypoint}
+          snap={snap} current={effectiveWaypoint}
           onClose={() => setPickingPoint(false)}
-          onPick={(w) => { setPickedWaypointId(w.id); setPickingPoint(false); }}
+          onPick={(w) => { setWaypointId(w.id); setPickingPoint(false); }}
         />
       )}
 
-      {cartCount > 0 && step !== "tracking" && (
+      {confirmation && (
+        <ConfirmDialog
+          {...confirmation}
+          onCancel={() => setConfirmation(null)}
+        />
+      )}
+
+      {cartCount > 0 && !["tracking", "orders"].includes(step) && (
         <button
           onClick={() => setStep("cart")}
-          className="fixed inset-x-0 bottom-0 mx-auto flex max-w-md items-center justify-between bg-accent px-5 py-4 text-white shadow-lg"
+          className="fixed inset-x-0 mx-auto flex max-w-md items-center justify-between px-5 py-3.5 text-white shadow-lg"
+          style={{ bottom: showNav ? 64 : 0, background: "var(--color-accent)" }}
         >
-          <span className="font-semibold">
-            {cartCount} item{cartCount > 1 ? "s" : ""}
-          </span>
-          <span className="mono">{euros(activeQuote?.goodsCents ?? 0)} · Review →</span>
+          <span className="font-semibold">{cartCount} item{cartCount > 1 ? "s" : ""}</span>
+          <span className="mono">{euros(quote?.goodsCents ?? 0)} · Review →</span>
         </button>
       )}
+
+      {showNav && (
+        <BottomNav
+          step={step}
+          liveCount={liveOrders.length}
+          totalCount={myOrders.length}
+          onShop={() => setStep("shops")}
+          onOrders={() => setStep("orders")}
+        />
+      )}
     </main>
+  );
+}
+
+/* ------------------------------ bottom nav ------------------------------ */
+
+function BottomNav({
+  step, liveCount, totalCount, onShop, onOrders,
+}: {
+  step: Step; liveCount: number; totalCount: number;
+  onShop: () => void; onOrders: () => void;
+}) {
+  const onShopTab = ["shops", "menu", "cart"].includes(step);
+  const onOrdersTab = ["orders", "tracking"].includes(step);
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-md border-t border-line bg-surface">
+      <Tab label="Order" icon="🛍️" active={onShopTab} onClick={onShop} />
+      <Tab
+        label="My orders" icon="📦" active={onOrdersTab} onClick={onOrders}
+        badge={liveCount > 0 ? liveCount : totalCount > 0 ? totalCount : undefined}
+        badgeLive={liveCount > 0}
+      />
+    </nav>
+  );
+}
+
+function Tab({
+  label, icon, active, onClick, badge, badgeLive,
+}: {
+  label: string; icon: string; active: boolean; onClick: () => void;
+  badge?: number; badgeLive?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-current={active ? "page" : undefined}
+      className="relative flex flex-1 flex-col items-center gap-0.5 py-2.5"
+      style={{ color: active ? "var(--color-accent)" : "var(--color-muted)" }}
+    >
+      <span className="text-lg leading-none">{icon}</span>
+      <span className="text-xs font-semibold">{label}</span>
+      {badge !== undefined && (
+        <span
+          className="mono absolute right-[26%] top-1.5 min-w-[18px] rounded-full px-1 text-[10px] font-bold leading-[18px] text-white"
+          style={{ background: badgeLive ? "var(--color-accent)" : "var(--color-muted)" }}
+        >
+          {badge}
+        </span>
+      )}
+      {active && (
+        <span className="absolute inset-x-6 top-0 h-0.5 rounded-full" style={{ background: "var(--color-accent)" }} />
+      )}
+    </button>
+  );
+}
+
+/* ----------------------------- confirm dialog --------------------------- */
+
+function ConfirmDialog({
+  title, body, confirmLabel, onConfirm, onCancel,
+}: Confirmation & { onCancel: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-4">
+      <div className="w-full max-w-md rounded-xl bg-surface p-5">
+        <h2 className="text-lg font-bold">{title}</h2>
+        <p className="mt-1.5 text-sm text-ink-2">{body}</p>
+        <div className="mt-5 grid grid-cols-2 gap-2">
+          <button onClick={onCancel} className="rounded-lg border border-line py-3 font-semibold">
+            Keep as is
+          </button>
+          <button
+            onClick={onConfirm}
+            className="rounded-lg py-3 font-semibold text-white"
+            style={{ background: "var(--color-alert)" }}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
 /* -------------------------------- header -------------------------------- */
 
 function Header({
-  flight, waypoint, now, connected, onChangeFlight,
+  flight, waypoint, now, connected, locked, onChangeFlight,
 }: {
   flight: Flight | null; waypoint: Waypoint | null; now: number;
-  connected: boolean; onChangeFlight: () => void;
+  connected: boolean; locked: boolean; onChangeFlight: () => void;
 }) {
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-surface/95 backdrop-blur">
@@ -263,9 +422,7 @@ function Header({
             <div className="mt-0.5 flex items-baseline gap-2">
               <span className="mono text-sm font-semibold">{flight.number}</span>
               <span className="text-sm text-ink-2">{flight.destinationCode}</span>
-              <span className="mono rounded bg-surface-2 px-1.5 py-0.5 text-xs">
-                Gate {flight.gate}
-              </span>
+              <span className="mono rounded bg-surface-2 px-1.5 py-0.5 text-xs">Gate {flight.gate}</span>
             </div>
           ) : (
             <div className="mt-0.5 text-sm text-muted">Scan your boarding pass</div>
@@ -277,7 +434,11 @@ function Header({
               <div className="mono text-sm font-semibold" style={{ color: "var(--color-accent)" }}>
                 Boards {inMinutes(flight.boardingAt, now)}
               </div>
-              <button onClick={onChangeFlight} className="eyebrow underline">change</button>
+              {locked ? (
+                <span className="eyebrow" title="You have an order in progress">🔒 order in progress</span>
+              ) : (
+                <button onClick={onChangeFlight} className="eyebrow underline">change flight</button>
+              )}
             </>
           )}
           {!connected && <div className="eyebrow" style={{ color: "var(--color-alert)" }}>offline</div>}
@@ -291,6 +452,130 @@ function Header({
         </div>
       )}
     </header>
+  );
+}
+
+/* ------------------------------ orders list ----------------------------- */
+
+function OrdersList({
+  orders, snap, now, missingCount, onOpen, onForget, onShop,
+}: {
+  orders: Order[];
+  snap: NonNullable<ReturnType<typeof useSnapshot>["snap"]>;
+  now: number; missingCount: number;
+  onOpen: (o: Order) => void; onForget: () => void; onShop: () => void;
+}) {
+  const live = orders.filter((o) => LIVE.includes(o.state));
+  const past = orders.filter((o) => !LIVE.includes(o.state));
+
+  return (
+    <section className="px-5 py-6">
+      <h1 className="text-2xl font-bold tracking-tight">My orders</h1>
+      <p className="mt-1 text-sm text-ink-2">
+        Everything you&rsquo;ve ordered on this device. Nothing here is ever lost by navigating away.
+      </p>
+
+      {orders.length === 0 && missingCount === 0 && (
+        <div className="mt-8 rounded-lg border border-dashed border-line-strong bg-surface p-8 text-center">
+          <div className="text-4xl">📦</div>
+          <p className="mt-3 text-ink-2">No orders yet.</p>
+          <button
+            onClick={onShop}
+            className="mt-4 rounded-lg px-5 py-3 font-semibold text-white"
+            style={{ background: "var(--color-accent)" }}
+          >
+            Browse the shops
+          </button>
+        </div>
+      )}
+
+      {live.length > 0 && (
+        <>
+          <div className="eyebrow mt-6">In progress</div>
+          <div className="mt-2 space-y-2">
+            {live.map((o) => <OrderRow key={o.id} order={o} snap={snap} now={now} onOpen={onOpen} />)}
+          </div>
+        </>
+      )}
+
+      {past.length > 0 && (
+        <>
+          <div className="eyebrow mt-6">Completed</div>
+          <div className="mt-2 space-y-2">
+            {past.map((o) => <OrderRow key={o.id} order={o} snap={snap} now={now} onOpen={onOpen} />)}
+          </div>
+        </>
+      )}
+
+      {missingCount > 0 && (
+        <div
+          className="mt-6 rounded-lg p-4"
+          style={{ background: "var(--color-signal-soft)", borderLeft: "3px solid var(--color-signal)" }}
+        >
+          <div className="mono text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-signal)" }}>
+            {missingCount} order{missingCount > 1 ? "s" : ""} no longer on the system
+          </div>
+          <p className="mt-1 text-sm text-ink-2">
+            The demo scenario was reset. Your remaining orders are unaffected.
+          </p>
+          <button onClick={onForget} className="mono mt-2 text-xs underline">clear them from this list</button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function OrderRow({
+  order, snap, now, onOpen,
+}: {
+  order: Order;
+  snap: NonNullable<ReturnType<typeof useSnapshot>["snap"]>;
+  now: number; onOpen: (o: Order) => void;
+}) {
+  const copy = STATE_COPY[order.state];
+  const merchant = snap.merchants.find((m) => m.id === order.merchantId);
+  const unit = snap.units.find((u) => u.id === order.robotId);
+  const isLive = LIVE.includes(order.state);
+  const arrived = order.state === "ARRIVED" || order.state === "NO_SHOW";
+
+  return (
+    <button
+      onClick={() => onOpen(order)}
+      className="w-full rounded-lg border bg-surface p-4 text-left"
+      style={{
+        borderColor: arrived ? "var(--color-accent)" : "var(--color-line)",
+        borderWidth: arrived ? 2 : 1,
+      }}
+    >
+      <div className="flex items-baseline justify-between">
+        <span className="mono text-xs text-muted">{order.ref}</span>
+        <span className="mono text-xs text-muted">{merchant?.name}</span>
+      </div>
+      <div className="mt-1 flex items-baseline justify-between gap-3">
+        <span className="font-semibold" style={{ color: arrived ? "var(--color-accent)" : undefined }}>
+          {copy.label}
+        </span>
+        <span className="mono text-sm">{euros(order.totalCents)}</span>
+      </div>
+      <div className="mt-1 truncate text-xs text-ink-2">
+        {order.lines.map((l) => `${l.qty}× ${l.name}`).join(", ")}
+      </div>
+      {isLive && (
+        <div className="mt-2 flex items-center justify-between">
+          <div className="h-1 flex-1 overflow-hidden rounded-full bg-surface-2">
+            <div
+              className="h-full rounded-full transition-all duration-700"
+              style={{ width: `${Math.round(progressOf(order.state) * 100)}%`, background: "var(--color-accent)" }}
+            />
+          </div>
+          <span className="mono ml-3 text-xs" style={{ color: "var(--color-accent)" }}>
+            {arrived ? `code ${order.handoverCode}`
+              : order.state === "IN_TRANSIT" && unit?.etaSeconds ? `${mmss(unit.etaSeconds)} away`
+              : inMinutes(order.promise.deliverBy, now)}
+          </span>
+        </div>
+      )}
+    </button>
   );
 }
 
@@ -309,7 +594,6 @@ function FlightPicker({
         <div className="text-3xl">📷</div>
         <div className="eyebrow mt-2">camera scan simulated — pick a flight below</div>
       </div>
-
       <div className="mt-5 space-y-2">
         {flights.map((f) => {
           const mins = Math.round((f.boardingAt - now) / 60000);
@@ -326,15 +610,12 @@ function FlightPicker({
                   <span className="text-sm text-ink-2">{f.destination}</span>
                 </div>
                 <div className="eyebrow mt-1">
-                  {f.carrier} · Gate {f.gate}
-                  {f.nonEu && " · non-EU"}
+                  {f.carrier} · Gate {f.gate}{f.nonEu && " · non-EU"}
                 </div>
               </div>
               <div className="text-right">
-                <div
-                  className="mono text-sm font-semibold"
-                  style={{ color: tight ? "var(--color-alert)" : "var(--color-accent)" }}
-                >
+                <div className="mono text-sm font-semibold"
+                     style={{ color: tight ? "var(--color-alert)" : "var(--color-accent)" }}>
                   {mins > 0 ? `${mins} min` : "boarding"}
                 </div>
                 <div className="eyebrow">to boarding</div>
@@ -357,20 +638,15 @@ function ShopList({
 }) {
   return (
     <section className="px-5 py-6">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Order to your seat</h1>
-          {waypoint && (
-            <p className="mt-1 text-sm text-ink-2">
-              {waypoint.landmark}.{" "}
-              <button onClick={onChangePoint} className="underline" style={{ color: "var(--color-accent)" }}>
-                Change spot
-              </button>
-            </p>
-          )}
-        </div>
-      </div>
-
+      <h1 className="text-2xl font-bold tracking-tight">Order to your seat</h1>
+      {waypoint && (
+        <p className="mt-1 text-sm text-ink-2">
+          {waypoint.landmark}.{" "}
+          <button onClick={onChangePoint} className="underline" style={{ color: "var(--color-accent)" }}>
+            Change spot
+          </button>
+        </p>
+      )}
       <div className="mt-5 space-y-3">
         {merchants.map((m) => {
           const count = products.filter((p) => p.merchantId === m.id && p.available).length;
@@ -408,21 +684,14 @@ function Menu({
       <button onClick={onBack} className="eyebrow">← all shops</button>
       <h1 className="mt-2 text-2xl font-bold tracking-tight">{merchant.name}</h1>
       <p className="mt-1 text-sm text-ink-2">{merchant.blurb}</p>
-
       <div className="mt-5 space-y-2">
         {products.map((p) => {
           const qty = cart[p.id] ?? 0;
           const blocked = p.ageRestricted;
           return (
-            <div
-              key={p.id}
-              className={`flex items-center gap-3 rounded-lg border border-line bg-surface p-3 ${
-                !p.available ? "opacity-45" : ""
-              }`}
-            >
-              <div className="grid h-11 w-11 shrink-0 place-items-center rounded bg-surface-2 text-xl">
-                {p.emoji}
-              </div>
+            <div key={p.id}
+                 className={`flex items-center gap-3 rounded-lg border border-line bg-surface p-3 ${!p.available ? "opacity-45" : ""}`}>
+              <div className="grid h-11 w-11 shrink-0 place-items-center rounded bg-surface-2 text-xl">{p.emoji}</div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline gap-2">
                   <span className="truncate font-medium">{p.name}</span>
@@ -430,10 +699,8 @@ function Menu({
                 </div>
                 <p className="truncate text-xs text-muted">{p.description}</p>
                 {blocked && (
-                  <div
-                    className="mono mt-1 inline-block rounded px-1.5 py-0.5 text-[10px]"
-                    style={{ background: "var(--color-signal-soft)", color: "var(--color-signal)" }}
-                  >
+                  <div className="mono mt-1 inline-block rounded px-1.5 py-0.5 text-[10px]"
+                       style={{ background: "var(--color-signal-soft)", color: "var(--color-signal)" }}>
                     COLLECT IN STORE — AGE CHECK REQUIRED
                   </div>
                 )}
@@ -443,20 +710,14 @@ function Menu({
                 <div className="flex shrink-0 items-center gap-2">
                   {qty > 0 && (
                     <>
-                      <button
-                        onClick={() => onRemove(p)}
-                        aria-label={`Remove one ${p.name}`}
-                        className="h-9 w-9 rounded-full border border-line text-lg leading-none"
-                      >−</button>
+                      <button onClick={() => onRemove(p)} aria-label={`Remove one ${p.name}`}
+                              className="h-9 w-9 rounded-full border border-line text-lg leading-none">−</button>
                       <span className="mono w-4 text-center text-sm">{qty}</span>
                     </>
                   )}
-                  <button
-                    onClick={() => onAdd(p)}
-                    aria-label={`Add ${p.name}`}
-                    className="h-9 w-9 rounded-full text-lg leading-none text-white"
-                    style={{ background: "var(--color-accent)" }}
-                  >+</button>
+                  <button onClick={() => onAdd(p)} aria-label={`Add ${p.name}`}
+                          className="h-9 w-9 rounded-full text-lg leading-none text-white"
+                          style={{ background: "var(--color-accent)" }}>+</button>
                 </div>
               )}
             </div>
@@ -539,17 +800,14 @@ function CartView({
         <Notice tone={warned ? "signal" : "accent"} title={warned ? "This is tight" : "We can make it"}>
           {quote.reason}{" "}
           {!warned && (
-            <>Arrives by <strong className="mono">{new Date(quote.promise.deliverBy).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</strong>.</>
+            <>Arrives by <strong className="mono">
+              {new Date(quote.promise.deliverBy).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+            </strong>.</>
           )}
         </Notice>
       )}
 
-      {refused && (
-        <Notice tone="alert" title="Too tight against boarding">
-          {quote.reason}
-        </Notice>
-      )}
-
+      {refused && <Notice tone="alert" title="Too tight against boarding">{quote.reason}</Notice>}
       {error && <Notice tone="alert" title="Couldn't place the order">{error}</Notice>}
 
       <button
@@ -598,9 +856,7 @@ function PointPicker({
   snap: NonNullable<ReturnType<typeof useSnapshot>["snap"]>;
   current: Waypoint; onClose: () => void; onPick: (w: Waypoint) => void;
 }) {
-  const options = snap.waypoints.filter(
-    (w) => w.kind === "gate" && w.zone === "airside-schengen",
-  );
+  const options = snap.waypoints.filter((w) => w.kind === "gate" && w.zone === "airside-schengen");
   return (
     <div className="fixed inset-0 z-30 flex flex-col bg-ground">
       <div className="flex items-center justify-between border-b border-line bg-surface px-5 py-3">
@@ -608,26 +864,22 @@ function PointPicker({
           <div className="eyebrow">Where are you sitting?</div>
           <div className="text-sm font-semibold">Pick a delivery point</div>
         </div>
-        <button onClick={onClose} className="mono text-sm underline">done</button>
+        <button onClick={onClose} className="mono rounded-lg border border-line px-4 py-2 text-sm">done</button>
       </div>
-
       <div className="border-b border-line bg-surface px-3 py-4">
         <TerminalMap
-          waypoints={snap.waypoints}
-          edges={snap.edges}
-          zones={["airside-schengen"]}
-          highlightWaypointId={current.id}
-          selectableKinds={["gate"]}
-          onSelect={onPick}
+          waypoints={snap.waypoints} edges={snap.edges} zones={["airside-schengen"]}
+          highlightWaypointId={current.id} selectableKinds={["gate"]} onSelect={onPick}
         />
       </div>
-
       <div className="no-bar flex-1 overflow-y-auto px-5 py-4">
+        <p className="mb-3 text-xs text-muted">
+          This only affects your next order. Orders already placed keep the spot you chose for them.
+        </p>
         <div className="space-y-2">
           {options.map((w) => (
             <button
-              key={w.id}
-              onClick={() => onPick(w)}
+              key={w.id} onClick={() => onPick(w)}
               className="w-full rounded-lg border bg-surface p-3 text-left"
               style={{
                 borderColor: w.id === current.id ? "var(--color-accent)" : "var(--color-line)",
@@ -647,11 +899,11 @@ function PointPicker({
 /* -------------------------------- tracking ------------------------------ */
 
 function Tracking({
-  order, snap, now, onStartOver,
+  order, snap, now, onBack, onShopAgain,
 }: {
   order: Order;
   snap: NonNullable<ReturnType<typeof useSnapshot>["snap"]>;
-  now: number; onStartOver: () => void;
+  now: number; onBack: () => void; onShopAgain: () => void;
 }) {
   const copy = STATE_COPY[order.state];
   const unit = snap.units.find((u) => u.id === order.robotId);
@@ -661,33 +913,27 @@ function Tracking({
   const progress = progressOf(order.state);
   const arrived = order.state === "ARRIVED" || order.state === "NO_SHOW";
   const done = ["COMPLETED", "REJECTED", "ABORTED"].includes(order.state);
-
   const gateChanged = order.history.some((h) => h.note?.startsWith("Gate change"));
 
   return (
     <section className="px-5 py-6">
-      <div className="eyebrow">{order.ref}</div>
+      <button onClick={onBack} className="eyebrow">← my orders</button>
+      <div className="eyebrow mt-2">{order.ref}</div>
       <h1 className="mt-1 text-2xl font-bold tracking-tight">{copy.label}</h1>
       <p className="mt-1 text-ink-2">{copy.detail}</p>
 
       <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-surface-2">
-        <div
-          className="h-full rounded-full transition-all duration-700"
-          style={{
-            width: `${Math.round(progress * 100)}%`,
-            background: done && order.state !== "COMPLETED" ? "var(--color-alert)" : "var(--color-accent)",
-          }}
-        />
+        <div className="h-full rounded-full transition-all duration-700"
+             style={{
+               width: `${Math.round(progress * 100)}%`,
+               background: done && order.state !== "COMPLETED" ? "var(--color-alert)" : "var(--color-accent)",
+             }} />
       </div>
 
       {arrived && (
         <div className="mt-5 rounded-lg p-5 text-center" style={{ background: "var(--color-accent)" }}>
-          <div className="mono text-xs uppercase tracking-widest text-white/80">
-            Enter this on the screen
-          </div>
-          <div className="mono mt-1 text-5xl font-bold tracking-[0.2em] text-white">
-            {order.handoverCode}
-          </div>
+          <div className="mono text-xs uppercase tracking-widest text-white/80">Enter this on the screen</div>
+          <div className="mono mt-1 text-5xl font-bold tracking-[0.2em] text-white">{order.handoverCode}</div>
           <div className="mt-2 text-sm text-white/90">{waypoint?.landmark}</div>
         </div>
       )}
@@ -697,13 +943,9 @@ function Tracking({
           {flight?.number} moved to gate {flight?.gate}. We rerouted — your order is still coming.
         </Notice>
       )}
-
       {order.slaMissed && (
-        <Notice tone="alert" title="We were late">
-          Your delivery fee has been refunded automatically.
-        </Notice>
+        <Notice tone="alert" title="We were late">Your delivery fee has been refunded automatically.</Notice>
       )}
-
       {order.state === "NO_SHOW" && (
         <Notice tone="signal" title="We couldn't find you">
           The unit is holding at {waypoint?.name}. Enter your code when you get there.
@@ -722,23 +964,16 @@ function Tracking({
           </div>
           <div className="mt-3">
             <TerminalMap
-              waypoints={snap.waypoints}
-              edges={snap.edges}
-              zones={["airside-schengen"]}
-              units={[unit]}
-              highlightWaypointId={order.deliveryWaypointId}
-              showLabels
+              waypoints={snap.waypoints} edges={snap.edges} zones={["airside-schengen"]}
+              units={[unit]} highlightWaypointId={order.deliveryWaypointId} showLabels
             />
           </div>
         </div>
       )}
 
-      {/* sponsored slot — the highest-attention surface in the product */}
       {!done && (
-        <div
-          className="mt-4 flex items-center gap-3 rounded-lg border p-4"
-          style={{ borderColor: "var(--color-line)", background: "var(--color-plum-soft)" }}
-        >
+        <div className="mt-4 flex items-center gap-3 rounded-lg border p-4"
+             style={{ borderColor: "var(--color-line)", background: "var(--color-plum-soft)" }}>
           <span className="text-2xl">🫒</span>
           <div className="min-w-0">
             <div className="mono text-[10px] uppercase tracking-widest" style={{ color: "var(--color-plum)" }}>
@@ -777,19 +1012,16 @@ function Tracking({
         <ol className="mono mt-3 space-y-1 text-xs text-ink-2">
           {order.history.map((h, i) => (
             <li key={i}>
-              {new Date(h.at).toLocaleTimeString("en-GB")} · {h.state}
-              {h.note ? ` — ${h.note}` : ""}
+              {new Date(h.at).toLocaleTimeString("en-GB")} · {h.state}{h.note ? ` — ${h.note}` : ""}
             </li>
           ))}
         </ol>
       </details>
 
       {done && (
-        <button
-          onClick={onStartOver}
-          className="mt-5 w-full rounded-lg py-4 font-semibold text-white"
-          style={{ background: "var(--color-accent)" }}
-        >
+        <button onClick={onShopAgain}
+                className="mt-5 w-full rounded-lg py-4 font-semibold text-white"
+                style={{ background: "var(--color-accent)" }}>
           Order something else
         </button>
       )}

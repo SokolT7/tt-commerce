@@ -17,10 +17,14 @@ export default function OpsConsole() {
   const { snap, connected } = useSnapshot();
   const now = useNow();
   const [busy, setBusy] = useState<string | null>(null);
+  const [pendingReset, setPendingReset] = useState(false);
 
   const run = async (action: string) => {
+    // Reset destroys every order in the system — never on a single tap.
+    if (action === "reset" && !pendingReset) { setPendingReset(true); return; }
     setBusy(action);
-    try { await api("/api/demo", { action }); } finally { setBusy(null); }
+    try { await api("/api/demo", { action }); }
+    finally { setBusy(null); setPendingReset(false); }
   };
 
   if (!snap) {
@@ -194,12 +198,24 @@ export default function OpsConsole() {
                   disabled={busy !== null}
                   className="w-full rounded border px-3 py-2.5 text-left text-sm disabled:opacity-40"
                   style={{
-                    borderColor: c.tone === "signal" ? "var(--color-night-signal)" : "var(--color-night-line)",
-                    color: c.tone === "signal" ? "var(--color-night-signal)" : "var(--color-night-ink)",
+                    borderColor: c.action === "reset" && pendingReset
+                      ? "var(--color-night-alert)"
+                      : c.tone === "signal" ? "var(--color-night-signal)" : "var(--color-night-line)",
+                    color: c.action === "reset" && pendingReset
+                      ? "var(--color-night-alert)"
+                      : c.tone === "signal" ? "var(--color-night-signal)" : "var(--color-night-ink)",
                   }}
                 >
-                  <div className="font-semibold">{busy === c.action ? "…" : c.label}</div>
-                  <div className="mono text-[10px]" style={{ color: "var(--color-night-muted)" }}>{c.hint}</div>
+                  <div className="font-semibold">
+                    {busy === c.action ? "…"
+                      : c.action === "reset" && pendingReset ? "Tap again to confirm"
+                      : c.label}
+                  </div>
+                  <div className="mono text-[10px]" style={{ color: "var(--color-night-muted)" }}>
+                    {c.action === "reset" && pendingReset
+                      ? "deletes every order — no undo"
+                      : c.hint}
+                  </div>
                 </button>
               ))}
             </div>
