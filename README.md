@@ -38,12 +38,44 @@ Supabase Studio runs at http://127.0.0.1:54323.
 
 ### Against a hosted Supabase project
 
+**Option A — the CLI (recommended).** Migration history is tracked, so later
+changes apply as increments rather than a rewrite.
+
 ```bash
-npx supabase link --project-ref <ref>
+npx supabase link --project-ref <your-project-ref>
 npx supabase db push
 ```
 
-Then set the project URL and keys in `.env.local`.
+Then seed the terminal and shops:
+
+```bash
+npx supabase db push --include-seed
+```
+
+**Option B — paste the SQL.** Two files in `supabase/setup/`, run in order in
+the Supabase dashboard under **SQL Editor → New query**:
+
+| File | What it does |
+|---|---|
+| `01_schema.sql` | Tables, functions, row-level security, realtime |
+| `02_seed.sql` | The terminal, route graph, 288 QR-coded seats, shops, menus, flight board |
+
+Both are generated from `supabase/migrations/` and verified against a clean
+database. Run them on a **new, empty project** — they create tables rather than
+alter them.
+
+Afterwards, create the shop logins against your cloud project:
+
+```bash
+SUPABASE_SERVICE_ROLE_KEY=<cloud service role key> \
+NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co \
+node scripts/seed-staff.mjs
+```
+
+Then put the project URL and keys in `.env.local`.
+
+> If you edit the schema later, change the files in `supabase/migrations/` —
+> they are the source of truth. `supabase/setup/` is a convenience copy.
 
 ---
 
