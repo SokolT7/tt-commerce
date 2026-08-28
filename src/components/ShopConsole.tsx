@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation";
 import { api, supabase, useLiveQuery, useNow, type DB } from "@/lib/hooks";
 import { euros, mmss } from "@/lib/format";
 import { STATE_COPY } from "@/domain/orders/machine";
+import {
+  Button, Pill, Monogram, EmptyState, SkeletonList,
+  IconOrders, IconStore, IconClock, IconCheck, IconAlert, IconRobot, IconLock, IconPin,
+} from "@/components/ui";
 
 type Tab = "orders" | "menu" | "settings" | "takings";
 
@@ -57,8 +61,23 @@ export function ShopConsole({ merchantId, slug, role }: { merchantId: string; sl
     [merchantId],
   );
 
-  if (error) return <Shell><p className="p-8 text-alert">{error}</p></Shell>;
-  if (!data?.shop) return <Shell><p className="p-8 eyebrow">loading…</p></Shell>;
+  if (error) {
+    return (
+      <Shell>
+        <EmptyState icon={<IconAlert size={26} />} title="Couldn't load your shop" body={error} />
+      </Shell>
+    );
+  }
+  if (!data?.shop) {
+    return (
+      <Shell>
+        <div className="mx-auto max-w-3xl px-6 py-10">
+          <div className="skeleton h-14 rounded-[var(--radius-lg)]" />
+          <div className="mt-6"><SkeletonList rows={3} /></div>
+        </div>
+      </Shell>
+    );
+  }
 
   const { shop, categories, products, live, done } = data;
   const incoming = live.filter((o) => o.state === "SENT_TO_MERCHANT");
@@ -71,32 +90,56 @@ export function ShopConsole({ merchantId, slug, role }: { merchantId: string; sl
 
   return (
     <Shell>
-      <header className="border-b border-line bg-surface">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-3">
-          <div style={{ borderLeft: `4px solid ${shop.colour}`, paddingLeft: 12 }}>
-            <div className="eyebrow">Shop console · {role}</div>
-            <h1 className="text-xl font-bold tracking-tight">{shop.name}</h1>
-          </div>
+      <header className="sticky top-0 z-20 border-b border-[var(--color-line)] bg-white/85 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-6 py-3.5">
           <div className="flex items-center gap-3">
+            <Monogram name={shop.name} colour={shop.colour} size={40} />
+            <div>
+              <h1 className="headline text-[19px] font-semibold leading-tight">{shop.name}</h1>
+              <p className="text-[12.5px] text-[var(--color-muted)]">Shop console · {role}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2.5">
             {incoming.length > 0 && (
-              <span className="mono animate-pulse rounded-full px-3 py-1 text-sm font-semibold text-white"
+              <span className="pop inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-semibold text-white"
                     style={{ background: "var(--color-alert)" }}>
+                <span className="relative flex h-2 w-2">
+                  <span className="pulse-ring absolute inline-flex h-full w-full rounded-full bg-white" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-white" />
+                </span>
                 {incoming.length} new
               </span>
             )}
             <OpenToggle shop={shop} onDone={reload} />
-            <button onClick={signOut} className="mono text-xs underline text-muted">sign out</button>
+            <button onClick={signOut}
+              className="pressable-sm rounded-full px-3 py-1.5 text-[13px] font-medium text-[var(--color-muted)] hover:bg-[var(--color-surface-2)]">
+              Sign out
+            </button>
           </div>
         </div>
-        <nav className="flex gap-1 px-6">
-          {(["orders", "menu", "settings", "takings"] as Tab[]).map((t) => (
-            <button key={t} onClick={() => setTab(t)}
-              className="mono border-b-2 px-4 py-2 text-sm capitalize"
-              style={{ borderColor: tab === t ? "var(--color-ink)" : "transparent",
-                       color: tab === t ? "var(--color-ink)" : "var(--color-muted)" }}>
-              {t}{t === "orders" && live.length > 0 && ` (${live.length})`}
-            </button>
-          ))}
+        <nav className="mx-auto flex max-w-6xl gap-1 px-4 pb-2">
+          {([
+            ["orders", "Orders", <IconOrders key="o" size={16} />],
+            ["menu", "Menu", <IconStore key="m" size={16} />],
+            ["takings", "Takings", <IconCheck key="t" size={16} />],
+            ["settings", "Settings", <IconLock key="s" size={16} />],
+          ] as const).map(([t, label, icon]) => {
+            const on = tab === t;
+            return (
+              <button key={t} onClick={() => setTab(t)}
+                className="pressable-sm inline-flex items-center gap-1.5 rounded-[10px] px-3 py-2 text-[14px] font-medium transition-colors"
+                style={on
+                  ? { background: "var(--color-accent-soft)", color: "var(--color-accent-ink)" }
+                  : { color: "var(--color-muted)" }}>
+                {icon}{label}
+                {t === "orders" && live.length > 0 && (
+                  <span className="ml-0.5 rounded-full bg-[var(--color-accent)] px-1.5 text-[11px] font-semibold text-white tnum">
+                    {live.length}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </nav>
       </header>
 
@@ -104,8 +147,8 @@ export function ShopConsole({ merchantId, slug, role }: { merchantId: string; sl
       {tab === "menu" && <Menu merchantId={merchantId} categories={categories} products={products} onDone={reload} />}
       {tab === "settings" && <Settings shop={shop} merchantId={merchantId} onDone={reload} />}
       {tab === "takings" && <Takings orders={done} rate={shop.commission_rate} />}
-      <p className="px-6 py-6 mono text-[10px] text-muted">
-        Shop: /merchant/{slug} · live updates from the database
+      <p className="mx-auto max-w-6xl px-6 py-8 text-[11.5px] text-[var(--color-muted)]">
+        /merchant/{slug} · updates live from the database
       </p>
     </Shell>
   );
@@ -123,11 +166,17 @@ function OpenToggle({ shop, onDone }: { shop: Shop; onDone: () => void }) {
     setBusy(false); onDone();
   };
   return (
-    <button onClick={toggle} disabled={busy}
-      className="mono rounded-full px-3 py-1 text-xs disabled:opacity-50"
+    <button onClick={toggle} disabled={busy} role="switch" aria-checked={shop.open}
+      aria-label={shop.open ? "Shop is open — tap to close" : "Shop is closed — tap to open"}
+      className="pressable-sm inline-flex items-center gap-2 rounded-full py-1.5 pl-2 pr-3 text-[13px] font-medium disabled:opacity-50"
       style={{ background: shop.open ? "var(--color-accent-soft)" : "var(--color-surface-2)",
-               color: shop.open ? "var(--color-accent)" : "var(--color-muted)" }}>
-      {shop.open ? "open" : "closed"}
+               color: shop.open ? "var(--color-accent-ink)" : "var(--color-muted)" }}>
+      <span className="relative h-5 w-9 rounded-full transition-colors duration-200"
+            style={{ background: shop.open ? "var(--color-accent)" : "var(--color-line-strong)" }}>
+        <span className="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ease-[var(--ease-out)]"
+              style={{ transform: shop.open ? "translateX(18px)" : "translateX(2px)" }} />
+      </span>
+      {shop.open ? "Open" : "Closed"}
     </button>
   );
 }
@@ -137,17 +186,12 @@ function OpenToggle({ shop, onDone }: { shop: Shop; onDone: () => void }) {
 function Orders({ orders, now, onDone }: { orders: OrderRow[]; now: number; onDone: () => void }) {
   if (orders.length === 0) {
     return (
-      <div className="grid place-items-center py-32 text-center">
-        <div>
-          <div className="text-5xl">🧾</div>
-          <p className="mt-4 text-lg text-ink-2">No orders waiting.</p>
-          <p className="mono mt-1 text-sm text-muted">New orders appear the moment a passenger pays.</p>
-        </div>
-      </div>
+      <EmptyState icon={<IconOrders size={26} />} title="No orders waiting"
+        body="New orders appear here the moment a passenger pays, with a sound and a countdown." />
     );
   }
   return (
-    <div className="grid gap-4 p-6 md:grid-cols-2 xl:grid-cols-3">
+    <div className="mx-auto grid max-w-6xl gap-4 p-6 md:grid-cols-2 xl:grid-cols-3">
       {orders.map((o) => <OrderCard key={o.id} order={o} now={now} onDone={onDone} />)}
     </div>
   );
@@ -158,7 +202,7 @@ function OrderCard({ order, now, onDone }: { order: OrderRow; now: number; onDon
   const [err, setErr] = useState<string | null>(null);
   const deadlineIn = order.promise_deadline
     ? Math.round((new Date(order.promise_deadline).getTime() - now) / 1000) : null;
-  const urgent = deadlineIn !== null && deadlineIn < 300;
+  const urgent = deadlineIn !== null && deadlineIn < 300;   // includes overdue
   const isNew = order.state === "SENT_TO_MERCHANT";
 
   const act = async (action: string, reason?: string) => {
@@ -169,73 +213,98 @@ function OrderCard({ order, now, onDone }: { order: OrderRow; now: number; onDon
   };
 
   return (
-    <article className="flex flex-col rounded-lg border bg-surface p-4"
-      style={{ borderColor: isNew ? "var(--color-alert)" : "var(--color-line)", borderWidth: isNew ? 2 : 1 }}>
-      <div className="flex items-baseline justify-between">
-        <span className="mono text-sm font-semibold">{order.ref}</span>
+    <article className="rise flex flex-col overflow-hidden rounded-[var(--radius-lg)] bg-white shadow-[var(--shadow-sm)]"
+      style={isNew ? { boxShadow: "0 0 0 2px var(--color-alert), var(--shadow-md)" } : undefined}>
+
+      <div className="flex items-center justify-between border-b border-[var(--color-line)] px-4 py-3">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[15px] font-semibold tnum">{order.ref}</span>
+          {isNew && <Pill tone="alert">New</Pill>}
+        </div>
         {deadlineIn !== null && (
-          <span className="mono rounded px-2 py-0.5 text-[10px] uppercase tracking-wider"
+          <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-semibold tnum"
             style={{ background: urgent ? "var(--color-alert-soft)" : "var(--color-surface-2)",
                      color: urgent ? "var(--color-alert)" : "var(--color-ink-2)" }}>
-            {mmss(deadlineIn)} left
+            <IconClock size={12} />
+            {/* A passed deadline is information the shop needs, not a blank dash. */}
+            {deadlineIn <= 0 ? "Overdue" : mmss(deadlineIn)}
           </span>
         )}
       </div>
-      <div className="mono mt-1 text-xs text-muted">
-        {order.flight_number} · Gate {order.flight_gate} · {order.passenger_name || "Passenger"}
+
+      <div className="px-4 pt-3">
+        <p className="text-[12.5px] text-[var(--color-muted)]">
+          {order.flight_number} · Gate {order.flight_gate} · {order.passenger_name || "Passenger"}
+        </p>
+
+        <ul className="mt-3 space-y-2">
+          {order.lines.map((l, i) => (
+            <li key={i}>
+              <div className="flex items-baseline gap-2.5">
+                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-[var(--color-surface-2)] text-[12px] font-semibold tnum">
+                  {l.qty}
+                </span>
+                <span className="flex-1 text-[14.5px]"><span aria-hidden>{l.emoji}</span> {l.name}</span>
+                <span className="shrink-0 text-[13px] text-[var(--color-muted)] tnum">
+                  {euros(l.unit_price_cents * l.qty)}
+                </span>
+              </div>
+              {l.options?.length > 0 && (
+                <p className="ml-[34px] mt-0.5 text-[12px] text-[var(--color-muted)]">
+                  {l.options.map((o) => o.name).join(", ")}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+
+        <div className="mt-3 flex items-start gap-2 rounded-[var(--radius-md)] bg-[var(--color-surface-2)] px-3 py-2.5">
+          <span className="mt-0.5 text-[var(--color-muted)]"><IconPin size={14} /></span>
+          <div className="min-w-0 text-[12.5px]">
+            <p className="font-semibold">{order.nav_waypoint_name}</p>
+            <p className="text-[var(--color-muted)]">
+              {order.location_note} · {Number(order.walk_metres).toFixed(1)} m walk
+            </p>
+          </div>
+        </div>
+
+        {err && (
+          <p className="mt-2 flex items-center gap-1.5 text-[12.5px]" style={{ color: "var(--color-alert)" }}>
+            <IconAlert size={13} />{err}
+          </p>
+        )}
       </div>
 
-      <ul className="mt-3 space-y-1.5">
-        {order.lines.map((l, i) => (
-          <li key={i} className="text-sm">
-            <div className="flex items-baseline gap-2">
-              <span className="mono font-semibold">{l.qty}×</span>
-              <span className="flex-1">{l.emoji} {l.name}</span>
-              <span className="mono text-xs text-muted">{euros(l.unit_price_cents * l.qty)}</span>
-            </div>
-            {l.options?.length > 0 && (
-              <div className="mono ml-6 text-[11px] text-muted">{l.options.map((o) => o.name).join(", ")}</div>
-            )}
-          </li>
-        ))}
-      </ul>
-
-      <div className="mono mt-3 rounded bg-surface-2 px-3 py-2 text-xs">
-        <div><strong>{order.nav_waypoint_name}</strong></div>
-        <div className="text-muted">{order.location_note} · {Number(order.walk_metres).toFixed(1)} m walk</div>
-      </div>
-
-      {err && <p className="mono mt-2 text-xs" style={{ color: "var(--color-alert)" }}>{err}</p>}
-
-      <div className="mt-auto pt-4">
+      <div className="mt-auto p-4">
         {order.state === "SENT_TO_MERCHANT" && (
           <div className="grid grid-cols-3 gap-2">
-            <button onClick={() => act("accept")} disabled={busy}
-              className="col-span-2 rounded-lg py-3 font-semibold text-white disabled:opacity-50"
-              style={{ background: "var(--color-accent)" }}>Accept</button>
-            <button onClick={() => act("reject", "Item unavailable")} disabled={busy}
-              className="rounded-lg border border-line py-3 text-sm disabled:opacity-50">Reject</button>
+            <Button className="col-span-2" loading={busy} onClick={() => act("accept")} icon={<IconCheck size={17} />}>
+              Accept
+            </Button>
+            <Button variant="secondary" disabled={busy} onClick={() => act("reject", "Item unavailable")}>
+              Reject
+            </Button>
           </div>
         )}
         {order.state === "PREPARING" && (
-          <button onClick={() => act("ready")} disabled={busy}
-            className="w-full rounded-lg py-3 font-semibold text-white disabled:opacity-50"
-            style={{ background: "var(--color-signal)" }}>Mark ready</button>
+          <Button full loading={busy} onClick={() => act("ready")}
+            className="!bg-[var(--color-signal)] !shadow-none">
+            Mark ready
+          </Button>
         )}
         {["READY", "ROBOT_ASSIGNED"].includes(order.state) && (
-          <div className="mono rounded-lg bg-surface-2 py-3 text-center text-sm text-ink-2">
-            {order.state === "READY" ? "Waiting for a unit…" : `${order.robot_id} on its way`}
+          <div className="flex items-center justify-center gap-2 rounded-[12px] bg-[var(--color-surface-2)] py-3 text-[13.5px] font-medium text-[var(--color-ink-2)]">
+            <IconRobot size={16} />
+            {order.state === "READY" ? "Waiting for a unit" : `${order.robot_id} on its way`}
           </div>
         )}
         {order.state === "AT_MERCHANT" && (
-          <button onClick={() => act("load")} disabled={busy}
-            className="w-full rounded-lg py-4 font-semibold text-white disabled:opacity-50"
-            style={{ background: "var(--color-accent)" }}>
-            Load {order.compartment_id} → confirm
-          </button>
+          <Button full size="lg" loading={busy} onClick={() => act("load")} icon={<IconRobot size={18} />}>
+            Load compartment {order.compartment_id}
+          </Button>
         )}
         {["IN_TRANSIT", "ARRIVED"].includes(order.state) && (
-          <div className="mono rounded-lg bg-surface-2 py-3 text-center text-sm text-ink-2">
+          <div className="rounded-[12px] bg-[var(--color-accent-soft)] py-3 text-center text-[13.5px] font-medium text-[var(--color-accent-ink)]">
             {STATE_COPY[order.state as keyof typeof STATE_COPY]?.label ?? order.state}
           </div>
         )}
@@ -615,10 +684,10 @@ function Takings({ orders, rate }: { orders: OrderRow[]; rate: number }) {
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: "accent" | "signal" }) {
   return (
-    <div className="rounded-lg border border-line bg-surface p-4">
-      <div className="eyebrow">{label}</div>
-      <div className="mono mt-1 text-2xl font-semibold"
-        style={{ color: tone ? `var(--color-${tone})` : "var(--color-ink)" }}>{value}</div>
+    <div className="rounded-[var(--radius-lg)] bg-white p-4 shadow-[var(--shadow-sm)]">
+      <p className="label">{label}</p>
+      <p className="mt-1.5 text-[26px] font-semibold leading-none tracking-tight tnum"
+        style={{ color: tone ? `var(--color-${tone})` : "var(--color-ink)" }}>{value}</p>
     </div>
   );
 }

@@ -5,6 +5,11 @@ import { api, supabase, useNow } from "@/lib/hooks";
 import { euros, inMinutes } from "@/lib/format";
 import { STATE_COPY, progressOf } from "@/domain/orders/machine";
 import { TerminalMap } from "@/components/TerminalMap";
+import {
+  Button, Card, Monogram, Pill, Notice, Sheet, SkeletonList, Stagger, EmptyState,
+  IconBag, IconOrders, IconPin, IconSeat, IconClock, IconCheck, IconArrowLeft,
+  IconPlus, IconMinus, IconPlane, IconStore, IconLock, IconAlert, IconRobot,
+} from "@/components/ui";
 import type {
   DeliveryLocationKind, Flight, Merchant, OrderState, Product, RouteEdge, Seat, Waypoint,
 } from "@/domain/types";
@@ -152,7 +157,13 @@ export function OrderApp({ seatToken }: { seatToken?: string }) {
   const quote = canQuote ? quoteResult : null;
 
   if (!cat || !ready) {
-    return <div className="grid min-h-screen place-items-center bg-ground"><span className="eyebrow">loading…</span></div>;
+    return (
+      <main className="mx-auto min-h-screen max-w-md px-5 pt-6">
+        <div className="skeleton h-[52px] rounded-[var(--radius-lg)]" />
+        <div className="skeleton mt-6 h-8 w-2/3 rounded-lg" />
+        <div className="mt-5"><SkeletonList rows={5} /></div>
+      </main>
+    );
   }
 
   const flight = cat.flights.find((f) => f.id === flightId) ?? null;
@@ -196,13 +207,13 @@ export function OrderApp({ seatToken }: { seatToken?: string }) {
   const showNav = step !== "flight";
 
   return (
-    <main className="mx-auto min-h-screen max-w-md bg-ground" style={{ paddingBottom: showNav ? 132 : 24 }}>
+    <main className="mx-auto min-h-screen max-w-md" style={{ paddingBottom: showNav ? 128 : 24 }}>
       <Header
         flight={flight} location={effectiveLocation} now={now}
         locked={liveOrders.length > 0}
         onChangeFlight={() => liveOrders.length === 0 && setConfirm({
           title: "Change flight?",
-          body: "This clears your basket. Orders you have already placed are kept.",
+          body: "This clears your basket. Orders you've already placed are kept.",
           label: "Change flight",
           run: () => { setStep("flight"); setCart({}); setMerchantId(null); setConfirm(null); },
         })}
@@ -239,18 +250,17 @@ export function OrderApp({ seatToken }: { seatToken?: string }) {
       )}
 
       {step === "tracking" && activeOrder && (
-        <Tracking order={activeOrder} cat={cat} now={now}
+        <Tracking order={activeOrder} cat={cat}
           onBack={() => setStep("orders")} onShopAgain={() => { setMerchantId(null); setStep("shops"); }} />
       )}
 
       {step === "tracking" && !activeOrder && (
-        <section className="px-5 py-10 text-center">
-          <div className="text-4xl">🔍</div>
-          <h1 className="mt-3 text-xl font-bold">That order isn&rsquo;t on this system</h1>
-          <button onClick={() => setStep("orders")}
-            className="mt-5 w-full rounded-lg py-3.5 font-semibold text-white"
-            style={{ background: "var(--color-accent)" }}>Back to my orders</button>
-        </section>
+        <EmptyState
+          icon={<IconAlert size={26} />}
+          title="That order isn't on this system"
+          body="It may have been cleared from the server. Your other orders are unaffected."
+          action={<Button onClick={() => setStep("orders")}>Back to my orders</Button>}
+        />
       )}
 
       {picking && (
@@ -260,32 +270,41 @@ export function OrderApp({ seatToken }: { seatToken?: string }) {
       )}
 
       {confirm && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-4">
-          <div className="w-full max-w-md rounded-xl bg-surface p-5">
-            <h2 className="text-lg font-bold">{confirm.title}</h2>
-            <p className="mt-1.5 text-sm text-ink-2">{confirm.body}</p>
-            <div className="mt-5 grid grid-cols-2 gap-2">
-              <button onClick={() => setConfirm(null)} className="rounded-lg border border-line py-3 font-semibold">Keep as is</button>
-              <button onClick={confirm.run} className="rounded-lg py-3 font-semibold text-white"
-                style={{ background: "var(--color-alert)" }}>{confirm.label}</button>
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-4">
+          <button aria-label="Cancel" onClick={() => setConfirm(null)}
+            className="fade-in absolute inset-0 bg-[rgba(16,20,19,0.42)] backdrop-blur-[2px]" />
+          <div className="sheet-up relative w-full max-w-md rounded-[var(--radius-2xl)] bg-white p-6 shadow-[var(--shadow-lg)]">
+            <h2 className="headline text-[19px] font-semibold">{confirm.title}</h2>
+            <p className="prose-balance mt-2 text-[14.5px] leading-relaxed text-[var(--color-ink-2)]">{confirm.body}</p>
+            <div className="mt-6 grid grid-cols-2 gap-2.5">
+              <Button variant="secondary" onClick={() => setConfirm(null)}>Keep as is</Button>
+              <Button variant="danger" onClick={confirm.run}>{confirm.label}</Button>
             </div>
           </div>
         </div>
       )}
 
       {cartCount > 0 && !["tracking", "orders"].includes(step) && (
-        <button onClick={() => setStep("cart")}
-          className="fixed inset-x-0 mx-auto flex max-w-md items-center justify-between px-5 py-3.5 text-white shadow-lg"
-          style={{ bottom: showNav ? 64 : 0, background: "var(--color-accent)" }}>
-          <span className="font-semibold">{cartCount} item{cartCount > 1 ? "s" : ""}</span>
-          <span className="mono">{euros(quote?.goodsCents ?? 0)} · Review →</span>
-        </button>
+        <div className="pointer-events-none fixed inset-x-0 z-30 mx-auto max-w-md px-4"
+             style={{ bottom: showNav ? 78 : 20 }}>
+          <button onClick={() => setStep("cart")}
+            className="pressable pop pointer-events-auto flex w-full items-center justify-between rounded-[16px] bg-[var(--color-accent)] px-5 py-4 text-white shadow-[var(--shadow-accent)]">
+            <span className="flex items-center gap-2.5">
+              <span className="grid h-6 min-w-6 place-items-center rounded-full bg-white/20 px-1.5 text-[12px] font-semibold tnum">
+                {cartCount}
+              </span>
+              <span className="text-[15px] font-semibold">View basket</span>
+            </span>
+            <span className="text-[15px] font-semibold tnum">{euros(quote?.goodsCents ?? 0)}</span>
+          </button>
+        </div>
       )}
 
       {showNav && (
-        <nav className="fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-md border-t border-line bg-surface">
-          <Tab label="Order" icon="🛍️" active={["shops","menu","cart"].includes(step)} onClick={() => setStep("shops")} />
-          <Tab label="My orders" icon="📦" active={["orders","tracking"].includes(step)}
+        <nav className="fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-md border-t border-[var(--color-line)] bg-white/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl">
+          <Tab label="Order" icon={<IconBag size={21} />} active={["shops","menu","cart"].includes(step)}
+            onClick={() => setStep("shops")} />
+          <Tab label="Orders" icon={<IconOrders size={21} />} active={["orders","tracking"].includes(step)}
             onClick={() => setStep("orders")}
             badge={liveOrders.length || myOrders.length || undefined} live={liveOrders.length > 0} />
         </nav>
@@ -294,247 +313,189 @@ export function OrderApp({ seatToken }: { seatToken?: string }) {
   );
 }
 
+/* ---------------------------------------------------------------- nav ---- */
+
 function Tab({ label, icon, active, onClick, badge, live }: {
-  label: string; icon: string; active: boolean; onClick: () => void; badge?: number; live?: boolean;
+  label: string; icon: React.ReactNode; active: boolean; onClick: () => void;
+  badge?: number; live?: boolean;
 }) {
   return (
     <button onClick={onClick} aria-current={active ? "page" : undefined}
-      className="relative flex flex-1 flex-col items-center gap-0.5 py-2.5"
+      className="pressable-sm relative flex flex-1 flex-col items-center gap-1 pb-2.5 pt-3"
       style={{ color: active ? "var(--color-accent)" : "var(--color-muted)" }}>
-      <span className="text-lg leading-none">{icon}</span>
-      <span className="text-xs font-semibold">{label}</span>
-      {badge !== undefined && (
-        <span className="mono absolute right-[26%] top-1.5 min-w-[18px] rounded-full px-1 text-[10px] font-bold leading-[18px] text-white"
-          style={{ background: live ? "var(--color-accent)" : "var(--color-muted)" }}>{badge}</span>
-      )}
-      {active && <span className="absolute inset-x-6 top-0 h-0.5 rounded-full" style={{ background: "var(--color-accent)" }} />}
+      <span className="relative">
+        {icon}
+        {badge !== undefined && badge > 0 && (
+          <span className="absolute -right-2.5 -top-1.5 grid h-[17px] min-w-[17px] place-items-center rounded-full px-1 text-[10px] font-bold text-white tnum"
+                style={{ background: live ? "var(--color-accent)" : "var(--color-muted)" }}>
+            {badge}
+          </span>
+        )}
+      </span>
+      <span className="text-[11px] font-medium">{label}</span>
+      {active && <span className="absolute inset-x-7 top-0 h-[2px] rounded-full bg-[var(--color-accent)]" />}
     </button>
   );
 }
 
-/* -------------------------------- header -------------------------------- */
+/* -------------------------------------------------------------- header --- */
 
 function Header({ flight, location, now, locked, onChangeFlight, onChangeLocation }: {
-  flight: Flight | null; location: LocationChoice | null; now: number; locked: boolean;
-  onChangeFlight: () => void; onChangeLocation: () => void;
+  flight: Flight | null; location: LocationChoice | null; now: number;
+  locked: boolean; onChangeFlight: () => void; onChangeLocation: () => void;
 }) {
+  const mins = flight ? Math.round((flight.boardingAt - now) / 60000) : 0;
+  const urgent = flight ? mins <= 20 : false;
+
   return (
-    <header className="sticky top-0 z-20 border-b border-line bg-surface/95 backdrop-blur">
-      <div className="flex items-center justify-between px-5 py-3">
-        <div>
-          <div className="eyebrow">Gate Delivery · ZAG</div>
+    <header className="sticky top-0 z-20 border-b border-[var(--color-line)] bg-white/85 backdrop-blur-xl">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[11px] bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
+          <IconPlane size={18} />
+        </span>
+        <div className="min-w-0 flex-1">
           {flight ? (
-            <div className="mt-0.5 flex items-baseline gap-2">
-              <span className="mono text-sm font-semibold">{flight.number}</span>
-              <span className="text-sm text-ink-2">{flight.destinationCode}</span>
-              <span className="mono rounded bg-surface-2 px-1.5 py-0.5 text-xs">Gate {flight.gate}</span>
-            </div>
-          ) : <div className="mt-0.5 text-sm text-muted">Choose your flight</div>}
-        </div>
-        <div className="text-right">
-          {flight && (
             <>
-              <div className="mono text-sm font-semibold" style={{ color: "var(--color-accent)" }}>
-                Boards {inMinutes(flight.boardingAt, now)}
+              <div className="flex items-baseline gap-1.5">
+                <span className="shrink-0 whitespace-nowrap text-[15px] font-semibold tnum">{flight.number}</span>
+                <span className="truncate text-[14px] text-[var(--color-ink-2)]">{flight.destination}</span>
               </div>
-              {locked
-                ? <span className="eyebrow">🔒 order in progress</span>
-                : <button onClick={onChangeFlight} className="eyebrow underline">change flight</button>}
+              <div className="mt-0.5 flex items-center gap-1.5 text-[12.5px] text-[var(--color-muted)]">
+                <IconClock size={13} />
+                <span className={urgent ? "font-semibold text-[var(--color-alert)]" : ""}>
+                  {mins > 0 ? `Boards in ${mins} min` : "Boarding now"}
+                </span>
+                {flight.gate && <><span aria-hidden>·</span><span>Gate {flight.gate}</span></>}
+              </div>
             </>
+          ) : (
+            <span className="text-[15px] font-medium text-[var(--color-muted)]">Choose your flight</span>
           )}
         </div>
+        {flight && (locked ? (
+          <Pill tone="accent"><IconLock size={12} /> In progress</Pill>
+        ) : (
+          <button onClick={onChangeFlight}
+            className="pressable-sm rounded-full px-3 py-1.5 text-[13px] font-medium text-[var(--color-ink-2)] hover:bg-[var(--color-surface-2)]">
+            Change
+          </button>
+        ))}
       </div>
+
       {location && (
         <button onClick={onChangeLocation}
-          className="flex w-full items-center justify-between border-t border-line bg-accent-soft px-5 py-1.5 text-left">
-          <span className="mono text-xs" style={{ color: "var(--color-accent)" }}>
-            📍 {location.label}
+          className="pressable-sm flex w-full items-center gap-2.5 border-t border-[var(--color-line)] bg-[var(--color-accent-soft)]/60 px-4 py-2.5 text-left">
+          <span className="text-[var(--color-accent)]">
+            {location.kind === "seat" ? <IconSeat size={16} /> : <IconPin size={16} />}
           </span>
-          <span className="mono text-[10px] underline" style={{ color: "var(--color-accent)" }}>change</span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[13.5px] font-medium text-[var(--color-accent-ink)]">{location.label}</span>
+          </span>
+          <span className="text-[12.5px] font-medium text-[var(--color-accent)]">Change</span>
         </button>
       )}
     </header>
   );
 }
 
-/* --------------------------- location picker ---------------------------- */
-
-function LocationPicker({ cat, current, onClose, onPick }: {
-  cat: Catalogue; current: LocationChoice | null;
-  onClose: () => void; onPick: (l: LocationChoice) => void;
-}) {
-  const [mode, setMode] = useState<"pin" | "gate" | "code">(current?.kind === "pin" ? "pin" : "gate");
-  const [pin, setPin] = useState<{ x: number; y: number } | null>(
-    current?.pinX != null ? { x: current.pinX, y: current.pinY! } : null);
-  const [code, setCode] = useState("");
-  const [codeError, setCodeError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const gates = cat.waypoints.filter((w) => w.kind === "gate" && w.zone === "airside-schengen");
-
-  const submitCode = async () => {
-    setBusy(true); setCodeError(null);
-    try {
-      const r = await (await fetch(`/api/v1/seat/${encodeURIComponent(code.trim())}`)).json();
-      if (r.error) throw new Error(r.error);
-      const s = r.seat as Seat;
-      onPick({
-        kind: "seat", seatId: s.id,
-        label: `Seat ${s.seatLabel}${s.gate ? ` · gate ${s.gate}` : ""}`,
-        detail: `${s.walkMetres.toFixed(1)} m from where the unit stops`,
-      });
-    } catch (e) {
-      setCodeError(e instanceof Error ? e.message : "That code is not recognised");
-    } finally { setBusy(false); }
-  };
-
-  return (
-    <div className="fixed inset-0 z-30 flex flex-col bg-ground">
-      <div className="flex items-center justify-between border-b border-line bg-surface px-5 py-3">
-        <div>
-          <div className="eyebrow">Where should we bring it?</div>
-          <div className="text-sm font-semibold">Set your delivery point</div>
-        </div>
-        <button onClick={onClose} className="mono rounded-lg border border-line px-4 py-2 text-sm">close</button>
-      </div>
-
-      <div className="flex gap-1 border-b border-line bg-surface px-3">
-        {([["pin","Drop a pin"],["gate","Pick a gate"],["code","Seat code"]] as const).map(([k, label]) => (
-          <button key={k} onClick={() => setMode(k)}
-            className="mono border-b-2 px-3 py-2 text-xs"
-            style={{ borderColor: mode === k ? "var(--color-ink)" : "transparent",
-                     color: mode === k ? "var(--color-ink)" : "var(--color-muted)" }}>{label}</button>
-        ))}
-      </div>
-
-      <div className="no-bar flex-1 overflow-y-auto">
-        {mode === "pin" && (
-          <div className="p-4">
-            <p className="text-sm text-ink-2">
-              Tap the map where you are sitting. We bring it to the nearest point the unit can
-              reach and tell you how far that is.
-            </p>
-            <div className="mt-3 rounded-lg border border-line bg-surface p-3">
-              <TerminalMap waypoints={cat.waypoints} edges={cat.edges} zones={["airside-schengen"]}
-                pin={pin} onPinDrop={(x, y) => setPin({ x, y })} showLabels />
-            </div>
-            {pin && (
-              <button onClick={() => onPick({
-                  kind: "pin", pinX: pin.x, pinY: pin.y,
-                  label: "Pin on the map", detail: "We will confirm the exact walk at checkout",
-                })}
-                className="mt-4 w-full rounded-lg py-3.5 font-semibold text-white"
-                style={{ background: "var(--color-accent)" }}>
-                Deliver here
-              </button>
-            )}
-          </div>
-        )}
-
-        {mode === "gate" && (
-          <div className="space-y-2 p-4">
-            {gates.map((w) => (
-              <button key={w.id}
-                onClick={() => onPick({ kind: "waypoint", waypointId: w.id, label: w.name, detail: w.landmark })}
-                className="w-full rounded-lg border bg-surface p-3 text-left"
-                style={{ borderColor: current?.waypointId === w.id ? "var(--color-accent)" : "var(--color-line)",
-                         borderWidth: current?.waypointId === w.id ? 2 : 1 }}>
-                <div className="font-medium">{w.name}</div>
-                <div className="text-xs text-muted">{w.landmark}</div>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {mode === "code" && (
-          <div className="p-4">
-            <p className="text-sm text-ink-2">
-              Every seat has a printed code. Scanning its QR opens this app with the seat already
-              set — or type the code here.
-            </p>
-            <input value={code} onChange={(e) => setCode(e.target.value)}
-              placeholder="Seat code from the sticker"
-              className="mono mt-3 w-full rounded border border-line bg-surface px-3 py-3" />
-            {codeError && <p className="mt-2 text-sm" style={{ color: "var(--color-alert)" }}>{codeError}</p>}
-            <button onClick={submitCode} disabled={busy || !code.trim()}
-              className="mt-3 w-full rounded-lg py-3.5 font-semibold text-white disabled:opacity-40"
-              style={{ background: "var(--color-accent)" }}>
-              {busy ? "Checking…" : "Use this seat"}
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ----------------------------- flight picker ---------------------------- */
+/* ------------------------------------------------------- flight picker --- */
 
 function FlightPicker({ flights, now, onPick }: { flights: Flight[]; now: number; onPick: (f: Flight) => void }) {
   return (
-    <section className="px-5 py-6">
-      <h1 className="text-2xl font-bold tracking-tight">Which flight are you on?</h1>
-      <p className="mt-2 text-sm text-ink-2">
-        We use it to be sure we can reach you before boarding. Nothing to install.
+    <section className="px-5 pb-8 pt-7">
+      <h1 className="headline text-[30px] font-semibold leading-[1.1]">Where are you flying?</h1>
+      <p className="prose-balance mt-2 text-[15px] leading-relaxed text-[var(--color-ink-2)]">
+        We use your boarding time to make sure anything you order reaches you before the gate closes.
       </p>
-      <div className="mt-5 space-y-2">
-        {flights.map((f) => {
-          const mins = Math.round((f.boardingAt - now) / 60000);
-          return (
-            <button key={f.id} onClick={() => onPick(f)}
-              className="flex w-full items-center justify-between rounded-lg border border-line bg-surface p-4 text-left transition hover:border-ink">
-              <div>
-                <div className="flex items-baseline gap-2">
-                  <span className="mono font-semibold">{f.number}</span>
-                  <span className="text-sm text-ink-2">{f.destination}</span>
+
+      <div className="mt-6 space-y-2.5">
+        <Stagger>
+          {flights.map((f) => {
+            const mins = Math.round((f.boardingAt - now) / 60000);
+            const urgent = mins <= 20;
+            // The airline code carries far more meaning to a traveller than
+            // initials taken from the carrier's full name.
+            const code = f.number.replace(/[^A-Za-z]/g, "").slice(0, 2).toUpperCase();
+            return (
+              <Card key={f.id} onClick={() => onPick(f)} className="p-4">
+                <div className="flex items-center gap-3.5">
+                  <span aria-hidden
+                    className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-[13px] text-[14px] font-semibold tracking-tight"
+                    style={{ background: "var(--color-surface-2)", color: "var(--color-ink-2)" }}>
+                    {code}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-[16px] font-semibold tnum">{f.number}</span>
+                      {f.nonEu && <Pill tone="signal">non-EU</Pill>}
+                    </div>
+                    <p className="mt-0.5 truncate text-[13.5px] text-[var(--color-ink-2)]">{f.destination}</p>
+                    <p className="mt-1 text-[12px] text-[var(--color-muted)]">
+                      {f.carrier}{f.gate ? ` · Gate ${f.gate}` : ""}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className="text-[19px] font-semibold tnum"
+                      style={{ color: urgent ? "var(--color-alert)" : "var(--color-accent)" }}>
+                      {mins > 0 ? `${mins}m` : "now"}
+                    </div>
+                    <div className="text-[11.5px] text-[var(--color-muted)]">to boarding</div>
+                  </div>
                 </div>
-                <div className="eyebrow mt-1">{f.carrier} · Gate {f.gate}{f.nonEu && " · non-EU"}</div>
-              </div>
-              <div className="text-right">
-                <div className="mono text-sm font-semibold"
-                  style={{ color: mins < 20 ? "var(--color-alert)" : "var(--color-accent)" }}>
-                  {mins > 0 ? `${mins} min` : "boarding"}
-                </div>
-                <div className="eyebrow">to boarding</div>
-              </div>
-            </button>
-          );
-        })}
+              </Card>
+            );
+          })}
+        </Stagger>
       </div>
     </section>
   );
 }
 
-/* ------------------------------- shop list ------------------------------ */
+/* ----------------------------------------------------------- shop list --- */
 
 function ShopList({ merchants, products, onPick }: {
   merchants: Merchant[]; products: Product[]; onPick: (m: Merchant) => void;
 }) {
+  if (merchants.length === 0) {
+    return <EmptyState icon={<IconStore size={26} />} title="No shops open right now"
+      body="Nothing in this zone is currently accepting orders. Try again shortly." />;
+  }
   return (
-    <section className="px-5 py-6">
-      <h1 className="text-2xl font-bold tracking-tight">Order to your seat</h1>
-      <div className="mt-5 space-y-3">
-        {merchants.map((m) => {
-          const count = products.filter((p) => p.merchantId === m.id && p.available).length;
-          return (
-            <button key={m.id} onClick={() => onPick(m)} disabled={!m.open}
-              className="w-full rounded-lg border border-line bg-surface p-4 text-left transition hover:border-ink disabled:opacity-50"
-              style={{ borderLeftWidth: 4, borderLeftColor: m.colour }}>
-              <div className="flex items-baseline justify-between">
-                <h2 className="font-semibold">{m.name}</h2>
-                <span className="mono text-xs text-muted">{m.open ? `~${m.prepMinutes} min` : "closed"}</span>
-              </div>
-              <p className="mt-1 text-sm text-ink-2">{m.blurb}</p>
-              <div className="eyebrow mt-2">{count} items available</div>
-            </button>
-          );
-        })}
+    <section className="px-5 pb-8 pt-7">
+      <h1 className="headline text-[30px] font-semibold leading-[1.1]">Order to your seat</h1>
+      <p className="mt-2 text-[15px] text-[var(--color-ink-2)]">
+        {merchants.length} shops delivering airside right now.
+      </p>
+
+      <div className="mt-6 space-y-2.5">
+        <Stagger>
+          {merchants.map((m) => {
+            const count = products.filter((p) => p.merchantId === m.id && p.available).length;
+            return (
+              <Card key={m.id} onClick={() => onPick(m)} className="p-4">
+                <div className="flex items-start gap-3.5">
+                  <Monogram name={m.name} colour={m.colour} />
+                  <div className="min-w-0 flex-1">
+                    <h2 className="truncate text-[16px] font-semibold">{m.name}</h2>
+                    <p className="prose-balance mt-0.5 line-clamp-2 text-[13.5px] leading-snug text-[var(--color-ink-2)]">
+                      {m.blurb}
+                    </p>
+                    <div className="mt-2 flex items-center gap-2">
+                      <Pill><IconClock size={12} /> ~{m.prepMinutes} min</Pill>
+                      <span className="text-[12.5px] text-[var(--color-muted)] tnum">{count} items</span>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </Stagger>
       </div>
     </section>
   );
 }
 
-/* --------------------------------- menu --------------------------------- */
+/* ---------------------------------------------------------------- menu --- */
 
 function MenuView({ cat, merchant, cart, setCart, onBack }: {
   cat: Catalogue; merchant: Merchant; cart: Cart;
@@ -543,7 +504,6 @@ function MenuView({ cat, merchant, cart, setCart, onBack }: {
   const [configuring, setConfiguring] = useState<Product | null>(null);
   const products = cat.products.filter((p) => p.merchantId === merchant.id);
   const cats = cat.categories.filter((c) => c.merchant_id === merchant.id);
-
   const groupsFor = (p: Product) => cat.optionGroups.filter((g) => g.product_id === p.id);
 
   const add = (p: Product) => {
@@ -563,51 +523,65 @@ function MenuView({ cat, merchant, cart, setCart, onBack }: {
   ].filter((s) => s.items.length > 0);
 
   return (
-    <section className="px-5 py-6">
-      <button onClick={onBack} className="eyebrow">← all shops</button>
-      <h1 className="mt-2 text-2xl font-bold tracking-tight">{merchant.name}</h1>
-      <p className="mt-1 text-sm text-ink-2">{merchant.blurb}</p>
+    <section className="px-5 pb-8 pt-5">
+      <button onClick={onBack}
+        className="pressable-sm -ml-1.5 inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-[13.5px] font-medium text-[var(--color-ink-2)] hover:bg-[var(--color-surface-2)]">
+        <IconArrowLeft size={16} /> All shops
+      </button>
+
+      <div className="mt-3 flex items-center gap-3.5">
+        <Monogram name={merchant.name} colour={merchant.colour} size={48} />
+        <div className="min-w-0">
+          <h1 className="headline text-[24px] font-semibold leading-tight">{merchant.name}</h1>
+          <p className="mt-0.5 line-clamp-1 text-[13.5px] text-[var(--color-ink-2)]">{merchant.blurb}</p>
+        </div>
+      </div>
 
       {sections.map((s) => (
-        <div key={s.name} className="mt-5">
-          <div className="eyebrow mb-2">{s.name}</div>
+        <div key={s.name} className="mt-7">
+          <h2 className="label mb-2.5 font-semibold text-[var(--color-ink)]">{s.name}</h2>
           <div className="space-y-2">
             {s.items.map((p) => {
               const qty = cart[p.id]?.qty ?? 0;
+              const disabled = !p.available;
               return (
                 <div key={p.id}
-                  className={`flex items-center gap-3 rounded-lg border border-line bg-surface p-3 ${!p.available ? "opacity-45" : ""}`}>
-                  <div className="grid h-11 w-11 shrink-0 place-items-center rounded bg-surface-2 text-xl">{p.emoji}</div>
+                  className={`flex items-start gap-3.5 rounded-[var(--radius-lg)] bg-white p-3.5 shadow-[var(--shadow-sm)] ${disabled ? "opacity-50" : ""}`}>
+                  <span aria-hidden className="grid h-11 w-11 shrink-0 place-items-center rounded-[13px] bg-[var(--color-surface-2)] text-[21px]">
+                    {p.emoji}
+                  </span>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2">
-                      <span className="truncate font-medium">{p.name}</span>
-                      <span className="mono shrink-0 text-sm">{euros(p.priceCents)}</span>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="truncate text-[15px] font-medium">{p.name}</span>
+                      <span className="shrink-0 text-[15px] font-semibold tnum">{euros(p.priceCents)}</span>
                     </div>
-                    <p className="truncate text-xs text-muted">{p.description}</p>
-                    {p.allergens && p.allergens.length > 0 && (
-                      <p className="mono text-[10px] text-muted">contains {p.allergens.join(", ")}</p>
+                    {p.description && (
+                      <p className="mt-0.5 line-clamp-2 text-[13px] leading-snug text-[var(--color-ink-2)]">{p.description}</p>
                     )}
-                    {p.ageRestricted && (
-                      <div className="mono mt-1 inline-block rounded px-1.5 py-0.5 text-[10px]"
-                        style={{ background: "var(--color-signal-soft)", color: "var(--color-signal)" }}>
-                        COLLECT IN STORE — AGE CHECK REQUIRED
+                    {p.allergens && p.allergens.length > 0 && (
+                      <p className="mt-1 text-[11.5px] text-[var(--color-muted)]">Contains {p.allergens.join(", ")}</p>
+                    )}
+                    {p.ageRestricted ? (
+                      <div className="mt-2"><Pill tone="signal"><IconLock size={11} /> Collect in store · age check</Pill></div>
+                    ) : !disabled && (
+                      <div className="mt-2.5 flex items-center gap-2">
+                        {qty > 0 && (
+                          <>
+                            <button onClick={() => remove(p)} aria-label={`Remove one ${p.name}`}
+                              className="pressable grid h-8 w-8 place-items-center rounded-full border border-[var(--color-line)] text-[var(--color-ink-2)]">
+                              <IconMinus size={15} />
+                            </button>
+                            <span className="w-4 text-center text-[14px] font-semibold tnum">{qty}</span>
+                          </>
+                        )}
+                        <button onClick={() => add(p)} aria-label={`Add ${p.name}`}
+                          className="pressable grid h-8 w-8 place-items-center rounded-full bg-[var(--color-accent)] text-white shadow-[var(--shadow-accent)]">
+                          <IconPlus size={15} />
+                        </button>
                       </div>
                     )}
+                    {disabled && <p className="mt-1.5 text-[12px] text-[var(--color-muted)]">Unavailable right now</p>}
                   </div>
-                  {!p.ageRestricted && p.available && (
-                    <div className="flex shrink-0 items-center gap-2">
-                      {qty > 0 && (
-                        <>
-                          <button onClick={() => remove(p)} aria-label={`Remove one ${p.name}`}
-                            className="h-9 w-9 rounded-full border border-line text-lg leading-none">−</button>
-                          <span className="mono w-4 text-center text-sm">{qty}</span>
-                        </>
-                      )}
-                      <button onClick={() => add(p)} aria-label={`Add ${p.name}`}
-                        className="h-9 w-9 rounded-full text-lg leading-none text-white"
-                        style={{ background: "var(--color-accent)" }}>+</button>
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -654,43 +628,52 @@ function OptionSheet({ cat, product, onClose, onConfirm }: {
   const incomplete = groups.some((g) => (chosen[g.id] ?? []).length < g.min_select);
 
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center bg-ink/40">
-      <div className="w-full max-w-md rounded-t-xl bg-surface p-5">
-        <div className="flex items-baseline justify-between">
-          <h2 className="text-lg font-bold">{product.name}</h2>
-          <button onClick={onClose} className="mono text-sm underline">cancel</button>
-        </div>
-        {groups.map((g) => (
-          <div key={g.id} className="mt-4">
-            <div className="eyebrow">{g.name}{g.min_select > 0 && " · required"}</div>
-            <div className="mt-2 space-y-1.5">
-              {cat.options.filter((o) => o.group_id === g.id && o.available).map((o) => {
-                const on = (chosen[g.id] ?? []).includes(o.id);
-                return (
-                  <button key={o.id} onClick={() => toggle(g.id, o.id, g.max_select)}
-                    className="flex w-full items-center justify-between rounded-lg border p-3 text-left"
-                    style={{ borderColor: on ? "var(--color-accent)" : "var(--color-line)", borderWidth: on ? 2 : 1 }}>
-                    <span>{o.name}</span>
-                    <span className="mono text-sm text-muted">
-                      {o.price_delta_cents ? `+${euros(o.price_delta_cents)}` : "—"}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+    <Sheet title={product.name} onClose={onClose}
+      footer={
+        <Button full size="lg" disabled={incomplete} onClick={() => onConfirm(all)}>
+          Add to basket · {euros(product.priceCents + delta)}
+        </Button>
+      }>
+      {groups.map((g) => (
+        <div key={g.id} className="mb-5">
+          <div className="mb-2 flex items-baseline gap-2">
+            <h3 className="text-[14px] font-semibold">{g.name}</h3>
+            {g.min_select > 0
+              ? <span className="text-[12px] text-[var(--color-alert)]">Required</span>
+              : <span className="text-[12px] text-[var(--color-muted)]">Optional</span>}
           </div>
-        ))}
-        <button onClick={() => onConfirm(all)} disabled={incomplete}
-          className="mt-5 w-full rounded-lg py-3.5 font-semibold text-white disabled:opacity-40"
-          style={{ background: "var(--color-accent)" }}>
-          Add · {euros(product.priceCents + delta)}
-        </button>
-      </div>
-    </div>
+          <div className="space-y-1.5">
+            {cat.options.filter((o) => o.group_id === g.id && o.available).map((o) => {
+              const on = (chosen[g.id] ?? []).includes(o.id);
+              return (
+                <button key={o.id} onClick={() => toggle(g.id, o.id, g.max_select)}
+                  className="pressable flex w-full items-center justify-between rounded-[var(--radius-md)] px-3.5 py-3 text-left transition-colors"
+                  style={{
+                    background: on ? "var(--color-accent-soft)" : "var(--color-surface-2)",
+                    color: on ? "var(--color-accent-ink)" : "var(--color-ink)",
+                  }}>
+                  <span className="flex items-center gap-2.5 text-[14.5px] font-medium">
+                    <span className="grid h-[18px] w-[18px] place-items-center rounded-full border-2 transition-colors"
+                      style={{ borderColor: on ? "var(--color-accent)" : "var(--color-line-strong)",
+                               background: on ? "var(--color-accent)" : "transparent", color: "white" }}>
+                      {on && <IconCheck size={11} strokeWidth={3} />}
+                    </span>
+                    {o.name}
+                  </span>
+                  <span className="text-[13.5px] font-medium tnum text-[var(--color-muted)]">
+                    {o.price_delta_cents ? `+${euros(o.price_delta_cents)}` : ""}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </Sheet>
   );
 }
 
-/* --------------------------------- cart --------------------------------- */
+/* ---------------------------------------------------------------- cart --- */
 
 function CartView({ cat, merchant, cart, setCart, quote, location, error, placing, onChangeLocation, onBack, onPlace }: {
   cat: Catalogue; merchant: Merchant; cart: Cart;
@@ -698,13 +681,14 @@ function CartView({ cat, merchant, cart, setCart, quote, location, error, placin
   quote: Quote | null; location: LocationChoice | null; error: string | null; placing: boolean;
   onChangeLocation: () => void; onBack: () => void; onPlace: () => void;
 }) {
+  const lines = Object.entries(cart).map(([id, v]) => ({
+    product: cat.products.find((p) => p.id === id)!, ...v,
+  })).filter((l) => l.product);
+
   const refused = quote?.verdict === "REFUSE";
   const warned = quote?.verdict === "WARN";
-  const lines = Object.entries(cart)
-    .map(([id, v]) => ({ product: cat.products.find((p) => p.id === id)!, ...v }))
-    .filter((l) => l.product);
 
-  const bump = (id: string, d: number) => setCart((c) => {
+  const setQty = (id: string, d: number) => setCart((c) => {
     const n = (c[id]?.qty ?? 0) + d;
     const next = { ...c };
     if (n <= 0) delete next[id]; else next[id] = { ...next[id], qty: n };
@@ -712,94 +696,118 @@ function CartView({ cat, merchant, cart, setCart, quote, location, error, placin
   });
 
   return (
-    <section className="px-5 py-6">
-      <button onClick={onBack} className="eyebrow">← keep browsing</button>
-      <h1 className="mt-2 text-2xl font-bold tracking-tight">Your order</h1>
+    <section className="px-5 pb-8 pt-5">
+      <button onClick={onBack}
+        className="pressable-sm -ml-1.5 inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-[13.5px] font-medium text-[var(--color-ink-2)] hover:bg-[var(--color-surface-2)]">
+        <IconArrowLeft size={16} /> Keep browsing
+      </button>
+      <h1 className="headline mt-3 text-[26px] font-semibold">Your basket</h1>
+      <p className="mt-1 text-[14px] text-[var(--color-ink-2)]">from {merchant.name}</p>
 
-      <div className="mt-4 space-y-2">
-        {lines.map((l) => (
-          <div key={l.product.id} className="flex items-center gap-3 rounded-lg border border-line bg-surface p-3">
-            <div className="grid h-10 w-10 place-items-center rounded bg-surface-2">{l.product.emoji}</div>
-            <div className="min-w-0 flex-1">
-              <div className="font-medium">{l.product.name}</div>
-              {l.optionIds.length > 0 && (
-                <div className="mono text-[11px] text-muted">
-                  {l.optionIds.map((id) => cat.options.find((o) => o.id === id)?.name).filter(Boolean).join(", ")}
+      <div className="mt-5 space-y-2">
+        {lines.map(({ product, qty, optionIds }) => {
+          const opts = optionIds.map((id) => cat.options.find((o) => o.id === id)).filter(Boolean);
+          const delta = opts.reduce((s, o) => s + (o?.price_delta_cents ?? 0), 0);
+          return (
+            <div key={product.id} className="flex items-start gap-3 rounded-[var(--radius-lg)] bg-white p-3.5 shadow-[var(--shadow-sm)]">
+              <span aria-hidden className="grid h-10 w-10 shrink-0 place-items-center rounded-[12px] bg-[var(--color-surface-2)] text-[19px]">
+                {product.emoji}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="truncate text-[14.5px] font-medium">{product.name}</span>
+                  <span className="shrink-0 text-[14.5px] font-semibold tnum">
+                    {euros((product.priceCents + delta) * qty)}
+                  </span>
                 </div>
-              )}
+                {opts.length > 0 && (
+                  <p className="mt-0.5 truncate text-[12.5px] text-[var(--color-muted)]">
+                    {opts.map((o) => o!.name).join(", ")}
+                  </p>
+                )}
+                <div className="mt-2 flex items-center gap-2">
+                  <button onClick={() => setQty(product.id, -1)} aria-label={`Remove one ${product.name}`}
+                    className="pressable grid h-7 w-7 place-items-center rounded-full border border-[var(--color-line)]">
+                    <IconMinus size={13} />
+                  </button>
+                  <span className="w-4 text-center text-[13.5px] font-semibold tnum">{qty}</span>
+                  <button onClick={() => setQty(product.id, 1)} aria-label={`Add one ${product.name}`}
+                    className="pressable grid h-7 w-7 place-items-center rounded-full border border-[var(--color-line)]">
+                    <IconPlus size={13} />
+                  </button>
+                </div>
+              </div>
             </div>
-            <button onClick={() => bump(l.product.id, -1)} className="h-8 w-8 rounded-full border border-line">−</button>
-            <span className="mono w-4 text-center">{l.qty}</span>
-            <button onClick={() => bump(l.product.id, 1)} className="h-8 w-8 rounded-full border border-line">+</button>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      <div className="mt-4 rounded-lg border border-line bg-surface p-4">
-        <div className="eyebrow">Delivering to</div>
-        <div className="mt-1 font-semibold">{location?.label ?? "Not set"}</div>
-        {quote && (
-          <p className="mt-1 text-sm text-ink-2">
-            The unit stops at <strong>{quote.location.navWaypointId}</strong> — about{" "}
-            <strong>{quote.location.walkMetres.toFixed(1)} m</strong> from you.
-          </p>
-        )}
-        <button onClick={onChangeLocation} className="mono mt-2 text-xs underline" style={{ color: "var(--color-accent)" }}>
-          change delivery point
+      {location && (
+        <button onClick={onChangeLocation}
+          className="pressable mt-4 flex w-full items-start gap-3 rounded-[var(--radius-lg)] bg-white p-4 text-left shadow-[var(--shadow-sm)]">
+          <span className="mt-0.5 text-[var(--color-accent)]">
+            {location.kind === "seat" ? <IconSeat size={19} /> : <IconPin size={19} />}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="label block">Delivering to</span>
+            <span className="mt-0.5 block text-[15px] font-semibold">{location.label}</span>
+            <span className="mt-0.5 block text-[13px] leading-snug text-[var(--color-ink-2)]">
+              {quote?.location.note ?? location.detail}
+            </span>
+          </span>
+          <span className="shrink-0 text-[12.5px] font-medium text-[var(--color-accent)]">Change</span>
         </button>
-      </div>
+      )}
 
-      <div className="mt-4 rounded-lg border border-line bg-surface p-4">
-        <Row label={`${merchant.name} items`} value={euros(quote?.goodsCents ?? 0)} />
+      <div className="mt-4 rounded-[var(--radius-lg)] bg-white p-4 shadow-[var(--shadow-sm)]">
+        <Row label="Items" value={euros(quote?.goodsCents ?? 0)} />
         <Row label="Delivery" value={euros(quote?.deliveryFeeCents ?? 0)} />
-        <div className="mt-2 border-t border-line pt-2">
+        <div className="mt-2.5 border-t border-[var(--color-line)] pt-2.5">
           <Row label="Total" value={euros(quote?.totalCents ?? 0)} bold />
         </div>
       </div>
 
-      {quote && quote.blockedItems.length > 0 && (
-        <Notice tone="signal" title="Not deliverable by robot">
-          {quote.blockedItems.join(", ")} needs an age check, so it stays collect-in-store.
-        </Notice>
-      )}
-      {quote && !refused && (
-        <Notice tone={warned ? "signal" : "accent"} title={warned ? "This is tight" : "We can make it"}>
-          {quote.reason}
-        </Notice>
-      )}
-      {refused && <Notice tone="alert" title="Too tight against boarding">{quote.reason}</Notice>}
-      {error && <Notice tone="alert" title="Couldn't place the order">{error}</Notice>}
+      <div className="mt-4 space-y-3">
+        {quote && quote.blockedItems.length > 0 && (
+          <Notice tone="signal" title="Some items need collecting in store" icon={<IconLock size={16} />}>
+            {quote.blockedItems.join(", ")} needs an age check, which an unattended unit can&rsquo;t do.
+            Everything else still comes to you.
+          </Notice>
+        )}
+        {quote && !refused && (
+          <Notice tone={warned ? "signal" : "accent"} icon={warned ? <IconAlert size={16} /> : <IconCheck size={16} />}
+            title={warned ? "This is tight against boarding" : "We can get this to you in time"}>
+            {quote.reason}
+          </Notice>
+        )}
+        {refused && (
+          <Notice tone="alert" title="Not enough time before boarding" icon={<IconAlert size={16} />}>
+            {quote.reason}
+          </Notice>
+        )}
+        {error && <Notice tone="alert" title="We couldn't place that order" icon={<IconAlert size={16} />}>{error}</Notice>}
+      </div>
 
-      <button onClick={onPlace} disabled={placing || refused || lines.length === 0 || !location}
-        className="mt-5 w-full rounded-lg py-4 font-semibold text-white disabled:opacity-40"
-        style={{ background: refused ? "var(--color-muted)" : "var(--color-accent)" }}>
-        {placing ? "Placing…" : refused ? "Not available for this flight" : `Pay ${euros(quote?.totalCents ?? 0)}`}
-      </button>
-      <p className="eyebrow mt-2 text-center">payment simulated · nothing is charged</p>
+      <div className="mt-5">
+        <Button full size="lg" loading={placing} disabled={refused || lines.length === 0} onClick={onPlace}>
+          {refused ? "Not available for this flight" : `Pay ${euros(quote?.totalCents ?? 0)}`}
+        </Button>
+        <p className="mt-2.5 text-center text-[12px] text-[var(--color-muted)]">
+          Payment is simulated — nothing is charged.
+        </p>
+      </div>
     </section>
   );
 }
 
 const Row = ({ label, value, bold }: { label: string; value: string; bold?: boolean }) => (
   <div className="flex items-baseline justify-between py-0.5">
-    <span className={bold ? "font-semibold" : "text-sm text-ink-2"}>{label}</span>
-    <span className={`mono ${bold ? "font-semibold" : "text-sm"}`}>{value}</span>
+    <span className={bold ? "text-[15px] font-semibold" : "text-[14px] text-[var(--color-ink-2)]"}>{label}</span>
+    <span className={`tnum ${bold ? "text-[16px] font-semibold" : "text-[14px] text-[var(--color-ink-2)]"}`}>{value}</span>
   </div>
 );
 
-function Notice({ tone, title, children }: {
-  tone: "accent" | "signal" | "alert"; title: string; children: React.ReactNode;
-}) {
-  return (
-    <div className="mt-4 rounded-lg p-4"
-      style={{ background: `var(--color-${tone}-soft)`, borderLeft: `3px solid var(--color-${tone})` }}>
-      <div className="mono text-xs font-semibold uppercase tracking-wider" style={{ color: `var(--color-${tone})` }}>{title}</div>
-      <p className="mt-1 text-sm text-ink-2">{children}</p>
-    </div>
-  );
-}
-
-/* ------------------------------ orders list ----------------------------- */
+/* -------------------------------------------------------------- orders --- */
 
 function OrdersList({ orders, missing, now, onOpen, onForget, onShop }: {
   orders: OrderRow[]; missing: number; now: number;
@@ -807,32 +815,42 @@ function OrdersList({ orders, missing, now, onOpen, onForget, onShop }: {
 }) {
   const live = orders.filter((o) => LIVE.includes(o.state));
   const past = orders.filter((o) => !LIVE.includes(o.state));
-  return (
-    <section className="px-5 py-6">
-      <h1 className="text-2xl font-bold tracking-tight">My orders</h1>
-      <p className="mt-1 text-sm text-ink-2">Nothing here is lost by navigating away.</p>
 
-      {orders.length === 0 && missing === 0 && (
-        <div className="mt-8 rounded-lg border border-dashed border-line-strong bg-surface p-8 text-center">
-          <div className="text-4xl">📦</div>
-          <p className="mt-3 text-ink-2">No orders yet.</p>
-          <button onClick={onShop} className="mt-4 rounded-lg px-5 py-3 font-semibold text-white"
-            style={{ background: "var(--color-accent)" }}>Browse the shops</button>
-        </div>
+  if (orders.length === 0 && missing === 0) {
+    return <EmptyState icon={<IconOrders size={26} />} title="No orders yet"
+      body="Anything you order appears here and stays put, even if you navigate away."
+      action={<Button onClick={onShop} icon={<IconBag size={17} />}>Browse the shops</Button>} />;
+  }
+
+  return (
+    <section className="px-5 pb-8 pt-7">
+      <h1 className="headline text-[28px] font-semibold">Your orders</h1>
+
+      {live.length > 0 && (
+        <>
+          <h2 className="label mt-6 mb-2.5 font-semibold text-[var(--color-ink)]">In progress</h2>
+          <div className="space-y-2.5">
+            <Stagger>{live.map((o) => <OrderRowCard key={o.id} order={o} now={now} onOpen={onOpen} />)}</Stagger>
+          </div>
+        </>
       )}
 
-      {live.length > 0 && <><div className="eyebrow mt-6">In progress</div>
-        <div className="mt-2 space-y-2">{live.map((o) => <OrderRowCard key={o.id} order={o} now={now} onOpen={onOpen} />)}</div></>}
-      {past.length > 0 && <><div className="eyebrow mt-6">Completed</div>
-        <div className="mt-2 space-y-2">{past.map((o) => <OrderRowCard key={o.id} order={o} now={now} onOpen={onOpen} />)}</div></>}
+      {past.length > 0 && (
+        <>
+          <h2 className="label mt-7 mb-2.5 font-semibold text-[var(--color-ink)]">Completed</h2>
+          <div className="space-y-2.5">
+            {past.map((o) => <OrderRowCard key={o.id} order={o} now={now} onOpen={onOpen} />)}
+          </div>
+        </>
+      )}
 
       {missing > 0 && (
-        <div className="mt-6 rounded-lg p-4"
-          style={{ background: "var(--color-signal-soft)", borderLeft: "3px solid var(--color-signal)" }}>
-          <div className="mono text-xs font-semibold uppercase" style={{ color: "var(--color-signal)" }}>
-            {missing} order{missing > 1 ? "s" : ""} no longer on the system
-          </div>
-          <button onClick={onForget} className="mono mt-2 text-xs underline">clear them from this list</button>
+        <div className="mt-6">
+          <Notice tone="signal" title={`${missing} order${missing > 1 ? "s" : ""} no longer on the system`}
+            icon={<IconAlert size={16} />}>
+            They were cleared from the server. Your remaining orders are unaffected.{" "}
+            <button onClick={onForget} className="font-medium underline underline-offset-2">Clear from this list</button>
+          </Notice>
         </div>
       )}
     </section>
@@ -842,105 +860,257 @@ function OrdersList({ orders, missing, now, onOpen, onForget, onShop }: {
 function OrderRowCard({ order, now, onOpen }: { order: OrderRow; now: number; onOpen: (o: OrderRow) => void }) {
   const copy = STATE_COPY[order.state];
   const arrived = order.state === "ARRIVED" || order.state === "NO_SHOW";
+  const isLive = LIVE.includes(order.state);
+  const pct = Math.round(progressOf(order.state) * 100);
+
   return (
-    <button onClick={() => onOpen(order)} className="w-full rounded-lg border bg-surface p-4 text-left"
-      style={{ borderColor: arrived ? "var(--color-accent)" : "var(--color-line)", borderWidth: arrived ? 2 : 1 }}>
-      <div className="flex items-baseline justify-between">
-        <span className="mono text-xs text-muted">{order.ref}</span>
-        <span className="mono text-xs text-muted">{order.merchant_name}</span>
+    <Card onClick={() => onOpen(order)} className="overflow-hidden p-4"
+      style={arrived ? { boxShadow: "0 0 0 2px var(--color-accent), var(--shadow-md)" } : undefined}>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-[12px] font-medium text-[var(--color-muted)] tnum">{order.ref}</span>
+        <span className="text-[12px] text-[var(--color-muted)]">{order.merchant_name}</span>
       </div>
-      <div className="mt-1 flex items-baseline justify-between gap-3">
-        <span className="font-semibold" style={{ color: arrived ? "var(--color-accent)" : undefined }}>{copy.label}</span>
-        <span className="mono text-sm">{euros(order.total_cents)}</span>
+      <div className="mt-1.5 flex items-baseline justify-between gap-3">
+        <span className="text-[16px] font-semibold" style={arrived ? { color: "var(--color-accent)" } : undefined}>
+          {copy.label}
+        </span>
+        <span className="text-[15px] font-semibold tnum">{euros(order.total_cents)}</span>
       </div>
-      <div className="mt-1 truncate text-xs text-ink-2">
+      <p className="mt-1 truncate text-[13px] text-[var(--color-ink-2)]">
         {order.lines.map((l) => `${l.qty}× ${l.name}`).join(", ")}
-      </div>
-      {LIVE.includes(order.state) && (
-        <div className="mt-2 flex items-center justify-between">
-          <div className="h-1 flex-1 overflow-hidden rounded-full bg-surface-2">
-            <div className="h-full rounded-full transition-all duration-700"
-              style={{ width: `${Math.round(progressOf(order.state) * 100)}%`, background: "var(--color-accent)" }} />
+      </p>
+
+      {isLive && (
+        <div className="mt-3 flex items-center gap-3">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--color-surface-2)]">
+            <div className="h-full rounded-full transition-[width] duration-700 ease-[var(--ease-out)]"
+              style={{ width: `${pct}%`, background: "var(--color-accent)" }} />
           </div>
-          {arrived && <span className="mono ml-3 text-xs" style={{ color: "var(--color-accent)" }}>code {order.handover_code}</span>}
+          {arrived
+            ? <Pill tone="accent">Code {order.handover_code}</Pill>
+            : <span className="text-[12px] font-medium text-[var(--color-muted)] tnum">
+                {inMinutes(new Date(order.created_at).getTime(), now)}
+              </span>}
         </div>
       )}
-      <span className="sr-only">{now}</span>
-    </button>
+    </Card>
   );
 }
 
-/* -------------------------------- tracking ------------------------------ */
+/* ------------------------------------------------------------ tracking --- */
 
-function Tracking({ order, cat, now, onBack, onShopAgain }: {
-  order: OrderRow; cat: Catalogue; now: number; onBack: () => void; onShopAgain: () => void;
+function Tracking({ order, cat, onBack, onShopAgain }: {
+  order: OrderRow; cat: Catalogue; onBack: () => void; onShopAgain: () => void;
 }) {
   const copy = STATE_COPY[order.state];
   const arrived = order.state === "ARRIVED" || order.state === "NO_SHOW";
   const done = ["COMPLETED", "REJECTED", "CANCELLED", "ABORTED"].includes(order.state);
+  const failed = done && order.state !== "COMPLETED";
+  const pct = Math.round(progressOf(order.state) * 100);
 
   return (
-    <section className="px-5 py-6">
-      <button onClick={onBack} className="eyebrow">← my orders</button>
-      <div className="eyebrow mt-2">{order.ref}</div>
-      <h1 className="mt-1 text-2xl font-bold tracking-tight">{copy.label}</h1>
-      <p className="mt-1 text-ink-2">{copy.detail}</p>
+    <section className="px-5 pb-8 pt-5">
+      <button onClick={onBack}
+        className="pressable-sm -ml-1.5 inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-[13.5px] font-medium text-[var(--color-ink-2)] hover:bg-[var(--color-surface-2)]">
+        <IconArrowLeft size={16} /> Your orders
+      </button>
 
-      <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-surface-2">
-        <div className="h-full rounded-full transition-all duration-700"
-          style={{ width: `${Math.round(progressOf(order.state) * 100)}%`,
-                   background: done && order.state !== "COMPLETED" ? "var(--color-alert)" : "var(--color-accent)" }} />
+      <div className="mt-4 flex items-start gap-3">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[14px]"
+          style={{ background: failed ? "var(--color-alert-soft)" : "var(--color-accent-soft)",
+                   color: failed ? "var(--color-alert)" : "var(--color-accent)" }}>
+          {done && !failed ? <IconCheck size={21} strokeWidth={2.4} /> : <IconRobot size={21} />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[12px] font-medium text-[var(--color-muted)] tnum">{order.ref}</p>
+          <h1 className="headline text-[24px] font-semibold leading-tight">{copy.label}</h1>
+          <p className="mt-0.5 text-[14px] text-[var(--color-ink-2)]">{copy.detail}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-[var(--color-surface-2)]">
+        <div className="h-full rounded-full transition-[width] duration-700 ease-[var(--ease-out)]"
+          style={{ width: `${pct}%`, background: failed ? "var(--color-alert)" : "var(--color-accent)" }} />
       </div>
 
       {arrived && (
-        <div className="mt-5 rounded-lg p-5 text-center" style={{ background: "var(--color-accent)" }}>
-          <div className="mono text-xs uppercase tracking-widest text-white/80">Enter this on the screen</div>
-          <div className="mono mt-1 text-5xl font-bold tracking-[0.2em] text-white">{order.handover_code}</div>
-          <div className="mt-2 text-sm text-white/90">{order.nav_waypoint_landmark}</div>
+        <div className="pop mt-5 overflow-hidden rounded-[var(--radius-xl)] p-6 text-center text-white shadow-[var(--shadow-accent)]"
+             style={{ background: "linear-gradient(160deg, var(--color-accent-hi), var(--color-accent))" }}>
+          <p className="text-[12.5px] font-medium text-white/80">Enter this on the robot&rsquo;s screen</p>
+          <p className="mt-2 text-[46px] font-semibold leading-none tracking-[0.16em] tnum">{order.handover_code}</p>
+          <p className="mt-3 text-[13.5px] text-white/85">{order.nav_waypoint_landmark}</p>
         </div>
       )}
 
       {order.sla_missed && (
-        <Notice tone="alert" title="We were late">Your delivery fee has been refunded automatically.</Notice>
+        <div className="mt-4">
+          <Notice tone="alert" title="We were late" icon={<IconClock size={16} />}>
+            Your delivery fee has been refunded automatically.
+          </Notice>
+        </div>
       )}
 
-      <div className="mt-5 rounded-lg border border-line bg-surface p-4">
-        <div className="eyebrow">Delivery point</div>
-        <div className="mt-1 font-semibold">{order.nav_waypoint_name}</div>
-        <p className="mt-1 text-sm text-ink-2">
-          {order.location_note} · {Number(order.walk_metres).toFixed(1)} m from where the unit stops
-        </p>
-        <div className="mt-3">
-          <TerminalMap waypoints={cat.waypoints} edges={cat.edges} zones={["airside-schengen"]}
-            highlightWaypointId={order.lines.length ? undefined : undefined} showLabels />
+      <div className="mt-5 rounded-[var(--radius-lg)] bg-white p-4 shadow-[var(--shadow-sm)]">
+        <div className="flex items-start gap-2.5">
+          <span className="mt-0.5 text-[var(--color-accent)]"><IconPin size={17} /></span>
+          <div className="min-w-0">
+            <p className="label">Delivery point</p>
+            <p className="mt-0.5 text-[15px] font-semibold">{order.nav_waypoint_name}</p>
+            <p className="mt-0.5 text-[13px] leading-snug text-[var(--color-ink-2)]">
+              {order.location_note} · {Number(order.walk_metres).toFixed(1)} m from where the unit stops
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 overflow-hidden rounded-[var(--radius-md)] bg-[var(--color-surface-2)]/50 p-2">
+          <TerminalMap waypoints={cat.waypoints} edges={cat.edges} zones={["airside-schengen"]} showLabels />
         </div>
       </div>
 
-      <div className="mt-4 rounded-lg border border-line bg-surface p-4">
-        <div className="eyebrow">Order</div>
-        <div className="mt-2 space-y-1">
+      <div className="mt-4 rounded-[var(--radius-lg)] bg-white p-4 shadow-[var(--shadow-sm)]">
+        <p className="label mb-2">Order</p>
+        <div className="space-y-1.5">
           {order.lines.map((l, i) => (
-            <div key={i} className="flex justify-between text-sm">
-              <span>{l.emoji} {l.qty} × {l.name}</span>
-              <span className="mono">{euros(l.unit_price_cents * l.qty)}</span>
+            <div key={i} className="flex items-baseline justify-between gap-3 text-[14px]">
+              <span className="truncate"><span aria-hidden>{l.emoji}</span> {l.qty} × {l.name}</span>
+              <span className="shrink-0 tnum">{euros(l.unit_price_cents * l.qty)}</span>
             </div>
           ))}
-          <div className="flex justify-between border-t border-line pt-1 text-sm">
-            <span className="text-muted">Delivery</span>
-            <span className="mono text-muted">{euros(order.delivery_fee_cents)}</span>
+          <div className="flex items-baseline justify-between border-t border-[var(--color-line)] pt-2 text-[13.5px] text-[var(--color-ink-2)]">
+            <span>Delivery</span><span className="tnum">{euros(order.delivery_fee_cents)}</span>
           </div>
-          <div className="flex justify-between font-semibold">
-            <span>Total</span><span className="mono">{euros(order.total_cents)}</span>
+          <div className="flex items-baseline justify-between text-[15px] font-semibold">
+            <span>Total</span><span className="tnum">{euros(order.total_cents)}</span>
           </div>
         </div>
-        <div className="eyebrow mt-3">from {order.merchant_name}</div>
+        <p className="mt-3 text-[12.5px] text-[var(--color-muted)]">from {order.merchant_name}</p>
       </div>
 
       {done && (
-        <button onClick={onShopAgain} className="mt-5 w-full rounded-lg py-4 font-semibold text-white"
-          style={{ background: "var(--color-accent)" }}>Order something else</button>
+        <div className="mt-5">
+          <Button full size="lg" onClick={onShopAgain} icon={<IconBag size={17} />}>Order something else</Button>
+        </div>
       )}
-      <p className="mono mt-4 text-center text-[10px] text-muted">{new Date(now).toLocaleTimeString("en-GB")}</p>
     </section>
+  );
+}
+
+/* ----------------------------------------------------- location picker --- */
+
+function LocationPicker({ cat, current, onClose, onPick }: {
+  cat: Catalogue; current: LocationChoice | null;
+  onClose: () => void; onPick: (l: LocationChoice) => void;
+}) {
+  const [mode, setMode] = useState<"pin" | "gate" | "code">(current?.kind === "pin" ? "pin" : "gate");
+  const [pin, setPin] = useState<{ x: number; y: number } | null>(
+    current?.pinX != null ? { x: current.pinX, y: current.pinY! } : null);
+  const [code, setCode] = useState("");
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const gates = cat.waypoints.filter((w) => w.kind === "gate" && w.zone === "airside-schengen");
+
+  const submitCode = async () => {
+    setBusy(true); setCodeError(null);
+    try {
+      const r = await (await fetch(`/api/v1/seat/${encodeURIComponent(code.trim())}`)).json();
+      if (r.error) throw new Error(r.error);
+      const s = r.seat as Seat;
+      onPick({
+        kind: "seat", seatId: s.id,
+        label: `Seat ${s.seatLabel}${s.gate ? ` · gate ${s.gate}` : ""}`,
+        detail: `${s.walkMetres.toFixed(1)} m from where the unit stops`,
+      });
+    } catch (e) {
+      setCodeError(e instanceof Error ? e.message : "That code is not recognised");
+    } finally { setBusy(false); }
+  };
+
+  const tabs = [
+    ["pin", "Drop a pin", <IconPin key="p" size={15} />],
+    ["gate", "Pick a gate", <IconStore key="g" size={15} />],
+    ["code", "Seat code", <IconSeat key="s" size={15} />],
+  ] as const;
+
+  return (
+    <Sheet title="Where should we bring it?" onClose={onClose}>
+      <div className="mb-4 flex gap-1 rounded-[12px] bg-[var(--color-surface-2)] p-1">
+        {tabs.map(([k, label, icon]) => (
+          <button key={k} onClick={() => setMode(k)}
+            className="pressable-sm flex flex-1 items-center justify-center gap-1.5 rounded-[9px] py-2 text-[13px] font-medium transition-colors"
+            style={mode === k
+              ? { background: "white", color: "var(--color-ink)", boxShadow: "var(--shadow-xs)" }
+              : { color: "var(--color-muted)" }}>
+            {icon}{label}
+          </button>
+        ))}
+      </div>
+
+      {mode === "pin" && (
+        <div className="fade-in pb-4">
+          <p className="prose-balance text-[13.5px] leading-relaxed text-[var(--color-ink-2)]">
+            Tap the map where you&rsquo;re sitting. We bring it to the nearest point the robot can reach
+            and tell you exactly how far that is.
+          </p>
+          <div className="mt-3 overflow-hidden rounded-[var(--radius-md)] bg-white p-2 shadow-[var(--shadow-sm)]">
+            <TerminalMap waypoints={cat.waypoints} edges={cat.edges} zones={["airside-schengen"]}
+              pin={pin} onPinDrop={(x, y) => setPin({ x, y })} showLabels />
+          </div>
+          {pin && (
+            <div className="pop mt-4">
+              <Button full size="lg" icon={<IconPin size={17} />}
+                onClick={() => onPick({
+                  kind: "pin", pinX: pin.x, pinY: pin.y,
+                  label: "Pin on the map", detail: "We confirm the exact walk at checkout",
+                })}>
+                Deliver here
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {mode === "gate" && (
+        <div className="fade-in space-y-2 pb-4">
+          {gates.map((w) => {
+            const on = current?.waypointId === w.id;
+            return (
+              <button key={w.id}
+                onClick={() => onPick({ kind: "waypoint", waypointId: w.id, label: w.name, detail: w.landmark })}
+                className="pressable flex w-full items-center gap-3 rounded-[var(--radius-md)] p-3.5 text-left transition-colors"
+                style={{ background: on ? "var(--color-accent-soft)" : "var(--color-surface-2)" }}>
+                <span style={{ color: on ? "var(--color-accent)" : "var(--color-muted)" }}><IconPin size={17} /></span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[14.5px] font-medium">{w.name}</span>
+                  <span className="block truncate text-[12.5px] text-[var(--color-ink-2)]">{w.landmark}</span>
+                </span>
+                {on && <span className="text-[var(--color-accent)]"><IconCheck size={17} strokeWidth={2.4} /></span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {mode === "code" && (
+        <div className="fade-in pb-4">
+          <p className="prose-balance text-[13.5px] leading-relaxed text-[var(--color-ink-2)]">
+            Every seat has a printed code. Scanning its QR opens this app with the seat already set —
+            or type the code here.
+          </p>
+          <input value={code} onChange={(e) => setCode(e.target.value)}
+            placeholder="Code from the seat sticker" autoCapitalize="characters" autoCorrect="off"
+            className="mt-3 w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-white px-4 py-3.5 text-[15px] outline-none transition-colors focus:border-[var(--color-accent)]" />
+          {codeError && (
+            <p className="mt-2 flex items-center gap-1.5 text-[13px] text-[var(--color-alert)]">
+              <IconAlert size={14} />{codeError}
+            </p>
+          )}
+          <div className="mt-3">
+            <Button full size="lg" loading={busy} disabled={!code.trim()} onClick={submitCode}>
+              Use this seat
+            </Button>
+          </div>
+        </div>
+      )}
+    </Sheet>
   );
 }

@@ -1,17 +1,8 @@
 import type { Metadata, Viewport } from "next";
-import { Archivo, IBM_Plex_Mono } from "next/font/google";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 
-const archivo = Archivo({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-archivo",
-});
-const plexMono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-plex-mono",
-});
 
 export const metadata: Metadata = {
   title: "Gate Delivery — ZAG",
@@ -27,8 +18,8 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${archivo.variable} ${plexMono.variable}`}>
-      <body style={{ fontFamily: "var(--font-archivo), system-ui, sans-serif" }}>
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+      <body>
         {children}
       </body>
     </html>
