@@ -67,6 +67,8 @@ export type MerchantKind = "cafe" | "market" | "restaurant" | "bar" | "retail";
 
 export interface Merchant {
   id: string;
+  /** Stable, human-readable key used in URLs. */
+  slug?: string;
   name: string;
   kind: MerchantKind;
   zone: ZoneId;
@@ -79,6 +81,7 @@ export interface Merchant {
   commissionRate: number;
   open: boolean;
   colour: string;
+  logoUrl?: string;
 }
 
 export type ProductCategory =
@@ -93,9 +96,11 @@ export type ProductCategory =
 export interface Product {
   id: string;
   merchantId: string;
+  /** Row in product_categories. Free-form categories replaced the fixed enum. */
+  categoryId?: string;
   name: string;
   description: string;
-  category: ProductCategory;
+  category?: ProductCategory;
   /** Cents, to avoid float money. */
   priceCents: number;
   available: boolean;
@@ -104,6 +109,43 @@ export interface Product {
   ageRestricted: boolean;
   allergens?: string[];
   emoji: string;
+  imageUrl?: string;
+  sortOrder?: number;
+}
+
+/* ------------------------------------------------------------------ *
+ * Delivery location
+ *
+ * A passenger can say where they are in three ways. All three resolve to a
+ * single dispatchable waypoint plus the distance they will walk, because a
+ * unit navigates to surveyed points and cannot drive between rows of seating.
+ * ------------------------------------------------------------------ */
+
+export type DeliveryLocationKind = "seat" | "pin" | "waypoint";
+
+export interface Seat {
+  id: string;
+  zone: ZoneId;
+  gate?: string;
+  rowLabel: string;
+  seatLabel: string;
+  x: number;
+  y: number;
+  navWaypointId: string;
+  walkMetres: number;
+}
+
+export interface DeliveryLocation {
+  kind: DeliveryLocationKind;
+  seatId?: string;
+  pinX?: number;
+  pinY?: number;
+  waypointId?: string;
+  /** Resolved by the server — where the unit is actually dispatched. */
+  navWaypointId: string;
+  walkMetres: number;
+  note: string;
+  zone: ZoneId;
 }
 
 /* ------------------------------------------------------------------ *

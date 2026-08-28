@@ -1,180 +1,123 @@
-# Gate Delivery — ZAG demo
+# Gate Delivery
 
-A working, multi-device demo of in-terminal ordering and robot delivery at
-Franjo Tuđman Airport. No robot, no airport access, no vendor API, no internet
-dependency once installed.
+In-terminal ordering and delivery for Franjo Tuđman Airport (ZAG). Passengers
+order from the airport's own shops and the order is brought to where they are
+sitting.
 
-Specs: [`demo_plan.md`](demo_plan.md) · [`Project_plan.md`](Project_plan.md)
+This is the **production build**: Supabase backend, real authentication,
+row-level security, and live updates. Robot dispatch runs against a simulated
+fleet until the vendor supplies their interface.
 
 ---
 
-## Run it
+## Running it
+
+Requires Docker (for local Supabase) and Node 20+.
 
 ```bash
+cp .env.example .env.local     # fill in, or use the local values below
+npx supabase start             # local Postgres, Auth, Realtime, Studio
+npx supabase db reset          # applies migrations + seeds the terminal
+node scripts/seed-staff.mjs    # creates a login for every shop
 npm run dev
 ```
 
-Then open the launcher at **http://localhost:3000** — it lists every surface.
+`npx supabase start` prints the local URL and keys. Put them in `.env.local`:
 
-| Surface | URL | Device |
+```
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key from the start output>
+SUPABASE_SERVICE_ROLE_KEY=<service_role key from the start output>
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+Shop logins are `<slug>@shop.local` with the password `gatedelivery` —
+for example `needstop@shop.local`. Development only.
+
+Supabase Studio runs at http://127.0.0.1:54323.
+
+### Against a hosted Supabase project
+
+```bash
+npx supabase link --project-ref <ref>
+npx supabase db push
+```
+
+Then set the project URL and keys in `.env.local`.
+
+---
+
+## The surfaces
+
+| Path | Who | What |
 |---|---|---|
-| Launcher & demo notes | `/` | Laptop |
-| Customer | `/order` — or `/order/wp/G07-A` to simulate a seat QR | Phone |
-| Merchant | `/merchant/needstop` | Tablet, landscape |
-| Operations | `/ops` | Laptop |
-| Robot screen | `/robot/SB-01` | Second tablet |
-
-### Across real devices
-
-`npm run dev` prints a **Network:** address (e.g. `http://172.20.10.4:3000`).
-Use that instead of `localhost` on your phone and tablets, with every device on
-the same network. A phone hotspot works well and is more reliable than venue
-Wi-Fi.
-
-macOS may prompt to allow incoming connections the first time — accept it, or
-the other devices will not reach the server.
-
-**The demo lands when the surfaces are on separate screens.** Accept an order on
-the merchant tablet and the passenger's phone updates in the same second — that
-is the thing worth showing.
-
-### Offline
-
-Everything runs locally with no external service. The one exception is the
-**first** `npm run dev`, which fetches the Archivo and IBM Plex Mono webfonts
-and then self-hosts them. Start it once with a connection; after that it runs in
-airplane mode.
-
-### Do not deploy this to Vercel or any serverless platform
-
-It will build and then behave incorrectly. Three structural reasons:
-
-- The engine is a **singleton on `globalThis`** (`src/server/engine.ts`).
-  Serverless runs isolated instances, so two devices can land on different
-  instances holding different state — which destroys the one thing the demo
-  exists to prove.
-- The simulation is driven by a **`setInterval` tick loop**. Serverless
-  functions freeze once a response is sent, so the units barely move.
-- Order tracking uses **SSE**, which needs a long-lived connection. Serverless
-  execution limits cut the stream repeatedly.
-
-This is a deliberate trade, not a defect: the demo is specified to run as one
-process with one command and no internet. If you ever do need a shareable URL,
-deploy to a host that runs a **persistent Node process** — Render, Railway,
-Fly.io or a VPS — where `npm run build && npm start` works unchanged. Production
-solves this properly per `Project_plan.md`: Postgres behind the repository
-interfaces, and the fleet controller on-site at MZLZ rather than in a cloud
-function.
+| `/order` | Passenger | Choose a flight, set a delivery point, order, track |
+| `/order/s/<token>` | Passenger | Seat QR deep link — the seat is already set |
+| `/merchant/login` | Shop staff | Sign in |
+| `/merchant/<slug>` | Shop staff | Orders, menu, preparation times, takings |
 
 ---
 
-## What is real, simulated, and out of scope
+## Where a passenger says they are
 
-Say this out loud in a demo — naming the gaps is what makes the rest credible.
+Three ways, all resolving to one dispatchable target:
 
-**Real** — the order state machine and every exception branch, flight-aware
-acceptance and refusal, catalogue management, live cross-device sync, the
-delivery-point model on a route graph, code-based handover, commission and the
-three-document fiscal split, ops console, incident log.
+1. **Scan the QR on the seat** — the most precise. Each seat is surveyed, so we
+   know its position and how far it is from the nearest point a unit can reach.
+2. **Drop a pin on the terminal map** — snapped to the nearest reachable point.
+3. **Pick a gate** — the fallback, and what a boarding pass pre-fills.
 
-**Simulated** — the robot (a virtual Speedybot walking the route graph at
-1.2 m/s), the flight board, payments.
-
-**Reconstructed** — the gate layout and walking distances. Confirmed real: gates
-4/5 and 12/13 exist and a Schengen / non-Schengen split runs through departures
-airside. Everything else needs an MZLZ survey.
-
-**Out of scope** — live FIDS, Croatian fiscalisation, POS integration, Wi-Fi
-location, media booking back-office, multi-language, accessibility audit. All of
-these are gated on a conversation with MZLZ or a vendor, not on engineering.
+A robot navigates to surveyed waypoints; it cannot drive between rows of fixed
+seating. So every location resolves to `nav_waypoint_id` plus `walk_metres`,
+and the passenger is told the walking distance **before** they pay.
 
 ---
 
-## The seven-minute script
-
-1. **Phone** — scan gate 7 (`/order/wp/G07-A`), pick flight OU 654, order a
-   cappuccino and a toastie.
-2. Point out the spirits at Aelia and the draught beer at The Pub, marked
-   *collect in store*. The catalogue enforces the age rule.
-3. **Merchant tablet** — the order is already there, counting down. Accept →
-   Mark ready → Load compartment.
-4. **Robot screen** plays its ad loop while it drives; the phone shows a live ETA.
-5. **Ops console** — inject a gate change. Watch it reroute and notify the passenger.
-6. Robot arrives. Enter the 4-digit code from the phone. Compartment opens.
-7. Order against **LH 1727** (boards in 12 minutes) — refused, store collection
-   offered instead.
-
-Rehearse it. A demo that needs narration to cover a gap is worse than a shorter demo.
-
-The ops console also injects a **blocked path** and a **passenger no-show**, and
-has an **emergency hold** that stops the fleet. Reset the scenario from the
-launcher or the ops console at any time.
-
----
-
-## Architecture
+## Structure
 
 ```
 src/
-├── domain/            ← production code. Survives into the real platform.
-│   ├── types.ts           shared domain types
-│   ├── spatial/           route graph, Dijkstra, honest ETAs
-│   ├── orders/            state machine, transitions, guards
-│   ├── acceptance/        flight-aware acceptance engine
-│   ├── pricing/           commission, fees, the three fiscal documents
-│   └── fleet/
-│       ├── adapter.ts     ← THE interface. 12 methods.
-│       └── simulated.ts   ← the demo, and the permanent CI test harness
-├── store/             repository interfaces + in-memory implementation
-├── server/            engine (orchestration), SSE bus
-├── seed/              real ZAG merchants, products, terminal, flights
-├── components/        the four surfaces
-└── app/               routes and API handlers
+├── domain/        Pure business rules — no database, no framework
+│   ├── spatial/   Route graph, shortest path, honest travel estimates
+│   ├── orders/    The state machine
+│   ├── acceptance/ Flight-aware acceptance: never promise what we cannot deliver
+│   ├── pricing/   Commission and the three fiscal documents
+│   └── fleet/     FleetAdapter interface + simulator
+├── server/        Supabase-backed services (data, ordering, workflow)
+├── lib/           Supabase clients, hooks, generated types
+├── components/    The passenger app, the shop console, the terminal map
+└── app/           Routes and the v1 API
+supabase/
+├── migrations/    Schema, functions, row-level security
+└── seed.sql       The terminal, the shops, the seats
 ```
 
-### The one idea that matters
+### Rules the code enforces
 
-`FleetAdapter` is the seam. Three implementations sit behind it:
-
-- `SimulatedAdapter` — this demo, and later the CI regression harness
-- `CourierAdapter` — a human runner with a phone (production Release 1)
-- `AlphaAdapter` — Suzhou Alpha Robotics Speedybot Max (production Release 3)
-
-A runner consumes a mission exactly as a robot does: go to the shop, collect
-into a compartment, travel to a waypoint, hand over on a code. So the human-first
-launch and the robot fleet share one orchestration core, and Release 3 swaps an
-implementation rather than rewriting the product.
-
-**Send this interface to Alpha Robotics** and ask which of the twelve methods
-they support, rather than waiting on their documentation.
+- **Prices come from the database.** The client sends product ids and
+  quantities; every monetary value is recomputed server-side.
+- **Order state moves through one place.** `src/server/workflow.ts` checks the
+  state machine, and a database trigger writes the history so no path can skip it.
+- **A mission never crosses a zone.** Sealed compartments are modelled as
+  disconnected components of the route graph, so it is structurally impossible.
+- **Age-restricted goods stay collect-in-store.** An unattended unit cannot
+  verify age.
+- **Three fiscal documents, never one.** The shop sells the goods, we sell the
+  delivery, we invoice commission.
 
 ---
 
-## Development notes
+## Not built yet
 
-**Restart the dev server after changing anything under `src/domain` or
-`src/server`.** The engine is a singleton pinned to `globalThis` so it survives
-hot reloads and keeps demo state across UI edits — which also means hot reload
-will happily keep running the *old* domain code. UI edits under `src/app` and
-`src/components` hot-reload normally.
+| Area | Status |
+|---|---|
+| Robot dispatch | Missions are created and assigned; motion is simulated. Waiting on the vendor interface. |
+| Payments | Mock provider. Set `STRIPE_SECRET_KEY` to switch. |
+| Fiscalisation | Documents are recorded and marked simulated. Set `FISCAL_PROVIDER_API_KEY` to switch. |
+| Live flight data | Seeded board. Set `FIDS_API_URL` to switch. |
 
-Type-check and lint:
+Each is behind an environment variable, so a missing key degrades one
+capability rather than breaking the build.
 
-```bash
-npx tsc --noEmit && npx eslint src
-```
-
-### Swapping the in-memory store for a database
-
-Everything goes through `Repository<T>` in `src/store/memory.ts`. Implement the
-same interface against Postgres and the domain does not change.
-
-### Known simplifications
-
-- State lives in memory. Restarting the server clears orders; the flight board
-  rebuilds relative to the restart. The customer surface keeps its session in
-  `localStorage`, so a phone refresh mid-demo does not lose the order.
-- Availability is a boolean toggle, not a stock count. Shops will not maintain
-  inventory in v1.
-- The prep-time model is declared-plus-hour-of-day. Production learns it from
-  measured accept-to-ready durations.
+> The gate layout and walking distances are a reconstruction pending a survey
+> with the airport. Shop names are the real operators.

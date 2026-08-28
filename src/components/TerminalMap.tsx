@@ -27,6 +27,9 @@ export function TerminalMap({
   highlightWaypointId,
   selectableKinds,
   onSelect,
+  onPinDrop,
+  pin,
+  seat,
   dark = false,
   showLabels = true,
   className = "",
@@ -38,6 +41,10 @@ export function TerminalMap({
   highlightWaypointId?: string | null;
   selectableKinds?: Waypoint["kind"][];
   onSelect?: (w: Waypoint) => void;
+  /** Tapping the map reports terminal coordinates in metres. */
+  onPinDrop?: (x: number, y: number) => void;
+  pin?: { x: number; y: number } | null;
+  seat?: { x: number; y: number; label: string } | null;
   dark?: boolean;
   showLabels?: boolean;
   className?: string;
@@ -66,12 +73,24 @@ export function TerminalMap({
   const px = (v: number) => v;
   const py = (v: number) => v * Y_SCALE;
 
+  const handleClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!onPinDrop) return;
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    // Map the click back through the viewBox into terminal metres.
+    const vx = minX + ((e.clientX - rect.left) / rect.width) * w;
+    const vy = minY + ((e.clientY - rect.top) / rect.height) * h;
+    onPinDrop(Math.round(vx * 10) / 10, Math.round((vy / Y_SCALE) * 10) / 10);
+  };
+
   return (
     <svg
       viewBox={`${minX} ${minY} ${w} ${h}`}
       className={className}
-      style={{ width: "100%", height: "auto", display: "block" }}
-      role="img"
+      style={{ width: "100%", height: "auto", display: "block",
+               cursor: onPinDrop ? "crosshair" : undefined, touchAction: "manipulation" }}
+      role={onPinDrop ? "application" : "img"}
+      onClick={handleClick}
       aria-label="Schematic map of the terminal showing delivery points and units"
     >
       {/* corridors */}
@@ -142,6 +161,24 @@ export function TerminalMap({
           </g>
         );
       })}
+
+      {/* the passenger's own position: a scanned seat, or a dropped pin */}
+      {seat && (
+        <g transform={`translate(${px(seat.x)} ${py(seat.y)})`}>
+          <circle r={13} fill="#0e6e5c" opacity={0.18} className="pulse-ring" />
+          <rect x={-7} y={-7} width={14} height={14} rx={3} fill="#0e6e5c" stroke={surface} strokeWidth={2} />
+          <text y={-13} textAnchor="middle" fontSize={11} fontWeight={700} fill="#0e6e5c"
+                fontFamily="var(--font-mono)">{seat.label}</text>
+        </g>
+      )}
+      {pin && (
+        <g transform={`translate(${px(pin.x)} ${py(pin.y)})`}>
+          <circle r={13} fill="#a8332b" opacity={0.18} className="pulse-ring" />
+          <path d="M0,2 C-6,-6 -9,-10 -9,-14 A9,9 0 0 1 9,-14 C9,-10 6,-6 0,2 Z"
+                fill="#a8332b" stroke={surface} strokeWidth={1.8} />
+          <circle cx={0} cy={-14} r={3.2} fill={surface} />
+        </g>
+      )}
 
       {/* units */}
       {units.map((u) => {

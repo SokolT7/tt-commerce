@@ -1,27 +1,44 @@
-"use client";
-
+import { redirect } from "next/navigation";
+import { createServerSupabase } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import Link from "next/link";
-import { useSnapshot } from "@/lib/client";
 
-export default function MerchantPicker() {
-  const { snap } = useSnapshot();
-  const merchants = snap?.merchants.filter((m) => m.zone === "airside-schengen") ?? [];
+export const dynamic = "force-dynamic";
+
+/** Sends staff straight to their own shop; shows a picker only if they run several. */
+export default async function MerchantIndex() {
+  const supabase = await createServerSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/merchant/login");
+
+  const db = createAdminClient();
+  const { data: links } = await db
+    .from("merchant_staff")
+    .select("merchant_id, role, merchants(slug, name, blurb, colour)")
+    .eq("user_id", user.id);
+
+  const shops = (links ?? []).flatMap((l) =>
+    l.merchants ? [{ ...l.merchants, role: l.role }] : []);
+
+  if (shops.length === 1) redirect(`/merchant/${shops[0].slug}`);
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-12">
-      <div className="eyebrow">Merchant tablet · back of house</div>
-      <h1 className="mt-2 text-3xl font-bold tracking-tight">Sign in to your shop</h1>
-      <p className="mt-2 text-ink-2">Pick the outlet this tablet belongs to.</p>
+      <div className="eyebrow">Shop console</div>
+      <h1 className="mt-2 text-3xl font-bold tracking-tight">Choose your outlet</h1>
+      {shops.length === 0 && (
+        <p className="mt-4 text-ink-2">
+          This account is not linked to a shop yet. Ask an administrator to add you.
+        </p>
+      )}
       <div className="mt-8 grid gap-3 sm:grid-cols-2">
-        {merchants.map((m) => (
-          <Link
-            key={m.id}
-            href={`/merchant/${m.id}`}
-            className="rounded-lg border border-line bg-surface p-5 transition hover:border-ink"
-            style={{ borderLeftWidth: 4, borderLeftColor: m.colour }}
-          >
-            <h2 className="text-lg font-semibold">{m.name}</h2>
-            <p className="mt-1 text-sm text-ink-2">{m.blurb}</p>
+        {shops.map((s) => (
+          <Link key={s.slug} href={`/merchant/${s.slug}`}
+                className="rounded-lg border border-line bg-surface p-5 transition hover:border-ink"
+                style={{ borderLeftWidth: 4, borderLeftColor: s.colour }}>
+            <h2 className="text-lg font-semibold">{s.name}</h2>
+            <p className="mt-1 text-sm text-ink-2">{s.blurb}</p>
+            <div className="eyebrow mt-2">{s.role}</div>
           </Link>
         ))}
       </div>

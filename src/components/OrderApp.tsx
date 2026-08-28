@@ -1,200 +1,196 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { api, useNow, useSnapshot } from "@/lib/client";
-import { euros, inMinutes, mmss } from "@/lib/format";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { api, supabase, useNow } from "@/lib/hooks";
+import { euros, inMinutes } from "@/lib/format";
 import { STATE_COPY, progressOf } from "@/domain/orders/machine";
 import { TerminalMap } from "@/components/TerminalMap";
-import type { Flight, Merchant, Order, Product, Waypoint } from "@/domain/types";
+import type {
+  DeliveryLocationKind, Flight, Merchant, OrderState, Product, RouteEdge, Seat, Waypoint,
+} from "@/domain/types";
 
 type Step = "flight" | "shops" | "menu" | "cart" | "orders" | "tracking";
-type Cart = Record<string, number>;
+type Cart = Record<string, { qty: number; optionIds: string[] }>;
+
+const LS_KEY = "gate-delivery-session";
+const LIVE: OrderState[] = ["DRAFT","VALIDATED","AUTHORIZED","SENT_TO_MERCHANT","ACCEPTED",
+  "PREPARING","READY","ROBOT_ASSIGNED","AT_MERCHANT","LOADED","IN_TRANSIT","ARRIVED","NO_SHOW"];
+
+interface Catalogue {
+  waypoints: Waypoint[]; edges: RouteEdge[]; merchants: Merchant[]; products: Product[];
+  flights: Flight[];
+  categories: { id: string; merchant_id: string; name: string; sort_order: number }[];
+  optionGroups: { id: string; product_id: string; name: string; min_select: number; max_select: number }[];
+  options: { id: string; group_id: string; name: string; price_delta_cents: number; available: boolean }[];
+}
 
 interface Quote {
-  verdict: "ACCEPT" | "WARN" | "REFUSE";
-  reason: string;
-  slackSeconds: number;
-  goodsCents: number;
-  deliveryFeeCents: number;
+  verdict: "ACCEPT" | "WARN" | "REFUSE"; reason: string;
+  goodsCents: number; deliveryFeeCents: number; totalCents: number;
   blockedItems: string[];
+  location: { navWaypointId: string; walkMetres: number; note: string };
   promise: { deliverBy: number };
 }
 
-interface Confirmation {
-  title: string;
-  body: string;
-  confirmLabel: string;
-  onConfirm: () => void;
+interface OrderRow {
+  id: string; ref: string; state: OrderState; total_cents: number; delivery_fee_cents: number;
+  handover_code: string; nav_waypoint_name: string; nav_waypoint_landmark: string;
+  location_note: string; walk_metres: number; robot_id: string | null;
+  merchant_name: string; flight_number: string | null; flight_gate: string | null;
+  sla_missed: boolean; created_at: string;
+  lines: { name: string; emoji: string; qty: number; unit_price_cents: number; options: { name: string }[] }[];
 }
 
-const LS_KEY = "gate-delivery-session";
-const LIVE = ["DRAFT", "VALIDATED", "AUTHORIZED", "SENT_TO_MERCHANT", "ACCEPTED",
-  "PREPARING", "READY", "ROBOT_ASSIGNED", "AT_MERCHANT", "LOADED", "IN_TRANSIT",
-  "ARRIVED", "NO_SHOW"];
-
-interface Session {
-  orderIds?: string[];
-  flightId?: string | null;
-  waypointId?: string | null;
-  activeOrderId?: string | null;
-  step?: Step;
+interface LocationChoice {
+  kind: DeliveryLocationKind;
+  seatId?: string; pinX?: number; pinY?: number; waypointId?: string;
+  label: string; detail: string;
 }
 
-function readSession(): Session {
-  if (typeof window === "undefined") return {};
-  try {
-    return JSON.parse(localStorage.getItem(LS_KEY) ?? "{}") as Session;
-  } catch {
-    return {};
-  }
-}
-
-export function OrderApp({ initialWaypointId }: { initialWaypointId?: string }) {
-  const { snap, connected } = useSnapshot();
+export function OrderApp({ seatToken }: { seatToken?: string }) {
   const now = useNow();
+  const [cat, setCat] = useState<Catalogue | null>(null);
+  const [ready, setReady] = useState(false);
 
-  // Hydrated from localStorage on first render so a refresh, a tab switch or a
-  // dropped connection never loses an order the passenger has already paid for.
-  const [session] = useState<Session>(readSession);
-  const [step, setStep] = useState<Step>(() => {
-    if (initialWaypointId && !session.orderIds?.length) return session.flightId ? "shops" : "flight";
-    if (session.step && session.orderIds?.length) return session.step;
-    if (session.orderIds?.length) return "orders";
-    return session.flightId ? "shops" : "flight";
-  });
-  const [flightId, setFlightId] = useState<string | null>(session.flightId ?? null);
-  const [waypointId, setWaypointId] = useState<string | null>(
-    initialWaypointId ?? session.waypointId ?? null,
-  );
-  const [orderIds, setOrderIds] = useState<string[]>(session.orderIds ?? []);
-  const [activeOrderId, setActiveOrderId] = useState<string | null>(session.activeOrderId ?? null);
-
+  const [step, setStep] = useState<Step>("flight");
+  const [flightId, setFlightId] = useState<string | null>(null);
+  const [location, setLocation] = useState<LocationChoice | null>(null);
   const [merchantId, setMerchantId] = useState<string | null>(null);
   const [cart, setCart] = useState<Cart>({});
+  const [orderIds, setOrderIds] = useState<string[]>([]);
+  const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
+  const [fetched, setFetched] = useState<OrderRow[]>([]);
+
   const [quoteResult, setQuoteResult] = useState<Quote | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
-  const [pickingPoint, setPickingPoint] = useState(false);
-  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [confirm, setConfirm] = useState<null | { title: string; body: string; label: string; run: () => void }>(null);
 
+  /* ---- boot: anonymous session, catalogue, restored state ---- */
   useEffect(() => {
-    localStorage.setItem(
-      LS_KEY,
-      JSON.stringify({ orderIds, flightId, waypointId, activeOrderId, step } satisfies Session),
-    );
-  }, [orderIds, flightId, waypointId, activeOrderId, step]);
-
-  const flight = useMemo(
-    () => snap?.flights.find((f) => f.id === flightId) ?? null, [snap, flightId]);
-  const waypoint = useMemo(
-    () => snap?.waypoints.find((w) => w.id === waypointId) ?? null, [snap, waypointId]);
-  const merchant = useMemo(
-    () => snap?.merchants.find((m) => m.id === merchantId) ?? null, [snap, merchantId]);
-
-  const myOrders = useMemo(() => {
-    if (!snap) return [];
-    return orderIds
-      .map((id) => snap.orders.find((o) => o.id === id))
-      .filter((o): o is Order => Boolean(o));
-  }, [snap, orderIds]);
-
-  const liveOrders = myOrders.filter((o) => LIVE.includes(o.state));
-  const activeOrder = myOrders.find((o) => o.id === activeOrderId) ?? null;
-  // Orders the phone remembers but the server no longer has — the scenario was
-  // reset from the ops console. Surfaced, never a blank screen.
-  const missingCount = orderIds.length - myOrders.length;
-
-  /* the gate on the boarding pass pre-fills the delivery point */
-  const derivedWaypointId = useMemo(() => {
-    if (waypointId) return waypointId;
-    if (!snap || !flight) return null;
-    return snap.waypoints.find((w) => w.kind === "gate" && w.gate === flight.gate)?.id ?? null;
-  }, [snap, flight, waypointId]);
-  const effectiveWaypoint = waypoint
-    ?? snap?.waypoints.find((w) => w.id === derivedWaypointId)
-    ?? null;
-
-  const canQuote = Boolean(
-    merchantId && flightId && derivedWaypointId && Object.keys(cart).length > 0,
-  );
-
-  /* live quote whenever the cart or destination moves */
-  useEffect(() => {
-    if (!canQuote) return;
-    const lines = Object.entries(cart).map(([productId, qty]) => ({ productId, qty }));
     let cancelled = false;
-    api<Quote>("/api/quote", {
-      merchantId, lines, flightId, deliveryWaypointId: derivedWaypointId,
-    })
-      .then((q) => { if (!cancelled) setQuoteResult(q); })
-      .catch(() => { if (!cancelled) setQuoteResult(null); });
-    return () => { cancelled = true; };
-  }, [canQuote, cart, merchantId, flightId, derivedWaypointId]);
+    (async () => {
+      const db = supabase();
+      const { data: { session } } = await db.auth.getSession();
+      if (!session) await db.auth.signInAnonymously();
 
-  // Derived, not stored: an empty basket has no quote by definition, so there
-  // is nothing to reset when the inputs go away.
+      const c = (await (await fetch("/api/v1/catalogue")).json()) as Catalogue;
+      if (cancelled) return;
+      setCat(c);
+
+      let restored: { orderIds?: string[]; flightId?: string; activeOrderId?: string; step?: Step; location?: LocationChoice } = {};
+      try { restored = JSON.parse(localStorage.getItem(LS_KEY) ?? "{}"); } catch { /* ignore */ }
+
+      if (seatToken) {
+        try {
+          const r = await (await fetch(`/api/v1/seat/${encodeURIComponent(seatToken)}`)).json();
+          const s = r.seat as Seat;
+          setLocation({
+            kind: "seat", seatId: s.id,
+            label: `Seat ${s.seatLabel}${s.gate ? ` · gate ${s.gate}` : ""}`,
+            detail: `${s.walkMetres.toFixed(1)} m from where the unit stops`,
+          });
+        } catch { /* fall through to manual choice */ }
+      } else if (restored.location) {
+        setLocation(restored.location);
+      }
+
+      // Hydration from localStorage after an await — one-shot, not a render loop.
+      if (restored.flightId) setFlightId(restored.flightId);
+      if (restored.orderIds?.length) {
+        setOrderIds(restored.orderIds);
+        setActiveOrderId(restored.activeOrderId ?? null);
+        setStep(restored.step === "tracking" && restored.activeOrderId ? "tracking" : "orders");
+      } else if (restored.flightId) {
+        setStep("shops");
+      }
+      setReady(true);
+    })();
+    return () => { cancelled = true; };
+  }, [seatToken]);
+
+  useEffect(() => {
+    if (!ready) return;
+    localStorage.setItem(LS_KEY, JSON.stringify({ orderIds, flightId, activeOrderId, step, location }));
+  }, [ready, orderIds, flightId, activeOrderId, step, location]);
+
+  /* ---- my orders, live ---- */
+  const loadOrders = useCallback(async () => {
+    if (orderIds.length === 0) return;   // nothing to fetch; the list is derived below
+    const { data } = await supabase().from("order_details").select("*").in("id", orderIds);
+    setFetched(((data ?? []) as unknown as OrderRow[]).sort(
+      (a, b) => +new Date(b.created_at) - +new Date(a.created_at)));
+  }, [orderIds]);
+
+  useEffect(() => {
+    // loadOrders is async and only sets state after awaiting the query, which the rule cannot see.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadOrders();
+    const db = supabase();
+    const ch = db.channel(`my-orders-${Math.random().toString(36).slice(2)}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => void loadOrders())
+      .subscribe();
+    return () => { void db.removeChannel(ch); };
+  }, [loadOrders]);
+
+  /* ---- live quote ---- */
+  const cartEntries = useMemo(() => Object.entries(cart), [cart]);
+  const canQuote = Boolean(merchantId && flightId && location && cartEntries.length > 0);
+  useEffect(() => {
+    if (!canQuote || !location || !merchantId || !flightId) return;
+    let cancelled = false;
+    api<Quote>("/api/v1/quote", {
+      merchantId, flightId,
+      lines: cartEntries.map(([productId, v]) => ({ productId, qty: v.qty, optionIds: v.optionIds })),
+      location: { kind: location.kind, seatId: location.seatId, pinX: location.pinX, pinY: location.pinY, waypointId: location.waypointId },
+    }).then((q) => { if (!cancelled) setQuoteResult(q); }).catch(() => { if (!cancelled) setQuoteResult(null); });
+    return () => { cancelled = true; };
+  }, [canQuote, cartEntries, merchantId, flightId, location]);
+
+  // Derived, not stored: an empty basket has no quote by definition.
   const quote = canQuote ? quoteResult : null;
 
-  if (!snap) {
-    return (
-      <div className="grid min-h-screen place-items-center bg-ground">
-        <div className="text-center">
-          <div className="eyebrow">connecting…</div>
-          <p className="mt-2 text-sm text-muted">Reconnecting automatically.</p>
-        </div>
-      </div>
-    );
+  if (!cat || !ready) {
+    return <div className="grid min-h-screen place-items-center bg-ground"><span className="eyebrow">loading…</span></div>;
   }
 
-  const cartCount = Object.values(cart).reduce((a, b) => a + b, 0);
-  const products = snap.products.filter((p) => p.merchantId === merchantId);
+  const flight = cat.flights.find((f) => f.id === flightId) ?? null;
+  const merchant = cat.merchants.find((m) => m.id === merchantId) ?? null;
+  // Derived so clearing the local list never needs a state write inside an effect.
+  const myOrders = fetched.filter((o) => orderIds.includes(o.id));
+  const liveOrders = myOrders.filter((o) => LIVE.includes(o.state));
+  const activeOrder = myOrders.find((o) => o.id === activeOrderId) ?? null;
+  const missing = orderIds.length - myOrders.length;
+  const cartCount = cartEntries.reduce((n, [, v]) => n + v.qty, 0);
 
-  const add = (p: Product) => setCart((c) => ({ ...c, [p.id]: (c[p.id] ?? 0) + 1 }));
-  const remove = (p: Product) =>
-    setCart((c) => {
-      const n = (c[p.id] ?? 0) - 1;
-      const next = { ...c };
-      if (n <= 0) delete next[p.id]; else next[p.id] = n;
-      return next;
-    });
+  // A boarding pass gate pre-fills the delivery point when nothing better is known.
+  const effectiveLocation: LocationChoice | null = location ?? (flight
+    ? (() => {
+        const wp = cat.waypoints.find((w) => w.kind === "gate" && w.gate === flight.gate);
+        return wp ? { kind: "waypoint" as const, waypointId: wp.id, label: wp.name, detail: wp.landmark } : null;
+      })()
+    : null);
 
   const place = async () => {
-    if (!merchantId || !flightId || !derivedWaypointId) return;
+    if (!merchantId || !flightId || !effectiveLocation) return;
     setPlacing(true); setError(null);
     try {
-      const lines = Object.entries(cart).map(([productId, qty]) => ({ productId, qty }));
-      const res = await api<{ order: Order }>("/api/order", {
-        merchantId, lines, flightId, deliveryWaypointId: derivedWaypointId,
+      const res = await api<{ order: OrderRow }>("/api/v1/orders", {
+        merchantId, flightId,
+        lines: cartEntries.map(([productId, v]) => ({ productId, qty: v.qty, optionIds: v.optionIds })),
+        location: {
+          kind: effectiveLocation.kind, seatId: effectiveLocation.seatId,
+          pinX: effectiveLocation.pinX, pinY: effectiveLocation.pinY, waypointId: effectiveLocation.waypointId,
+        },
       });
       setOrderIds((ids) => [res.order.id, ...ids]);
       setActiveOrderId(res.order.id);
-      setCart({});
-      setMerchantId(null);
-      setStep("tracking");
+      setCart({}); setMerchantId(null); setStep("tracking");
+      void loadOrders();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
-    } finally {
-      setPlacing(false);
-    }
-  };
-
-  // Changing the flight is destructive to the current basket and re-anchors the
-  // delivery point, so it is confirmed — and blocked outright while an order is
-  // in flight, because there is no version of that action a passenger wants.
-  const requestFlightChange = () => {
-    if (liveOrders.length > 0) return;
-    setConfirmation({
-      title: "Change flight?",
-      body: "This clears your basket and resets the delivery point. Orders you have already placed are kept.",
-      confirmLabel: "Change flight",
-      onConfirm: () => {
-        setStep("flight");
-        setCart({});
-        setMerchantId(null);
-        setWaypointId(null);
-        setConfirmation(null);
-      },
-    });
+    } finally { setPlacing(false); }
   };
 
   const showNav = step !== "flight";
@@ -202,216 +198,125 @@ export function OrderApp({ initialWaypointId }: { initialWaypointId?: string }) 
   return (
     <main className="mx-auto min-h-screen max-w-md bg-ground" style={{ paddingBottom: showNav ? 132 : 24 }}>
       <Header
-        flight={flight}
-        waypoint={effectiveWaypoint}
-        now={now}
-        connected={connected}
+        flight={flight} location={effectiveLocation} now={now}
         locked={liveOrders.length > 0}
-        onChangeFlight={requestFlightChange}
+        onChangeFlight={() => liveOrders.length === 0 && setConfirm({
+          title: "Change flight?",
+          body: "This clears your basket. Orders you have already placed are kept.",
+          label: "Change flight",
+          run: () => { setStep("flight"); setCart({}); setMerchantId(null); setConfirm(null); },
+        })}
+        onChangeLocation={() => setPicking(true)}
       />
 
       {step === "flight" && (
-        <FlightPicker
-          flights={snap.flights}
-          now={now}
-          onPick={(f) => {
-            setFlightId(f.id);
-            if (!initialWaypointId) setWaypointId(null);
-            setStep("shops");
-          }}
-        />
+        <FlightPicker flights={cat.flights} now={now}
+          onPick={(f) => { setFlightId(f.id); setStep("shops"); }} />
       )}
 
       {step === "shops" && flight && (
-        <ShopList
-          merchants={snap.merchants.filter((m) => m.zone === "airside-schengen")}
-          products={snap.products}
-          onPick={(m) => { setMerchantId(m.id); setStep("menu"); }}
-          onChangePoint={() => setPickingPoint(true)}
-          waypoint={effectiveWaypoint}
-        />
+        <ShopList merchants={cat.merchants.filter((m) => m.zone === "airside-schengen")}
+          products={cat.products} onPick={(m) => { setMerchantId(m.id); setStep("menu"); }} />
       )}
 
       {step === "menu" && merchant && (
-        <Menu
-          merchant={merchant} products={products} cart={cart}
-          onAdd={add} onRemove={remove} onBack={() => setStep("shops")}
-        />
+        <MenuView cat={cat} merchant={merchant} cart={cart} setCart={setCart}
+          onBack={() => setStep("shops")} />
       )}
 
       {step === "cart" && merchant && (
-        <CartView
-          merchant={merchant} products={snap.products} cart={cart} quote={quote}
-          waypoint={effectiveWaypoint} now={now} error={error} placing={placing}
-          onAdd={add} onRemove={remove}
-          onChangePoint={() => setPickingPoint(true)}
-          onBack={() => setStep("menu")}
-          onPlace={place}
-        />
+        <CartView cat={cat} merchant={merchant} cart={cart} setCart={setCart} quote={quote}
+          location={effectiveLocation} error={error} placing={placing}
+          onChangeLocation={() => setPicking(true)}
+          onBack={() => setStep("menu")} onPlace={place} />
       )}
 
       {step === "orders" && (
-        <OrdersList
-          orders={myOrders}
-          snap={snap}
-          now={now}
-          missingCount={missingCount}
+        <OrdersList orders={myOrders} missing={missing} now={now}
           onOpen={(o) => { setActiveOrderId(o.id); setStep("tracking"); }}
           onForget={() => setOrderIds(myOrders.map((o) => o.id))}
-          onShop={() => setStep("shops")}
-        />
+          onShop={() => setStep("shops")} />
       )}
 
       {step === "tracking" && activeOrder && (
-        <Tracking
-          order={activeOrder} snap={snap} now={now}
-          onBack={() => setStep("orders")}
-          onShopAgain={() => { setMerchantId(null); setStep("shops"); }}
-        />
+        <Tracking order={activeOrder} cat={cat} now={now}
+          onBack={() => setStep("orders")} onShopAgain={() => { setMerchantId(null); setStep("shops"); }} />
       )}
 
       {step === "tracking" && !activeOrder && (
         <section className="px-5 py-10 text-center">
           <div className="text-4xl">🔍</div>
           <h1 className="mt-3 text-xl font-bold">That order isn&rsquo;t on this system</h1>
-          <p className="mt-2 text-sm text-ink-2">
-            The demo scenario was probably reset. Your other orders are unaffected.
-          </p>
-          <button
-            onClick={() => setStep("orders")}
+          <button onClick={() => setStep("orders")}
             className="mt-5 w-full rounded-lg py-3.5 font-semibold text-white"
-            style={{ background: "var(--color-accent)" }}
-          >
-            Back to my orders
-          </button>
+            style={{ background: "var(--color-accent)" }}>Back to my orders</button>
         </section>
       )}
 
-      {pickingPoint && effectiveWaypoint && (
-        <PointPicker
-          snap={snap} current={effectiveWaypoint}
-          onClose={() => setPickingPoint(false)}
-          onPick={(w) => { setWaypointId(w.id); setPickingPoint(false); }}
-        />
+      {picking && (
+        <LocationPicker cat={cat} current={effectiveLocation}
+          onClose={() => setPicking(false)}
+          onPick={(l) => { setLocation(l); setPicking(false); }} />
       )}
 
-      {confirmation && (
-        <ConfirmDialog
-          {...confirmation}
-          onCancel={() => setConfirmation(null)}
-        />
+      {confirm && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-surface p-5">
+            <h2 className="text-lg font-bold">{confirm.title}</h2>
+            <p className="mt-1.5 text-sm text-ink-2">{confirm.body}</p>
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <button onClick={() => setConfirm(null)} className="rounded-lg border border-line py-3 font-semibold">Keep as is</button>
+              <button onClick={confirm.run} className="rounded-lg py-3 font-semibold text-white"
+                style={{ background: "var(--color-alert)" }}>{confirm.label}</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {cartCount > 0 && !["tracking", "orders"].includes(step) && (
-        <button
-          onClick={() => setStep("cart")}
+        <button onClick={() => setStep("cart")}
           className="fixed inset-x-0 mx-auto flex max-w-md items-center justify-between px-5 py-3.5 text-white shadow-lg"
-          style={{ bottom: showNav ? 64 : 0, background: "var(--color-accent)" }}
-        >
+          style={{ bottom: showNav ? 64 : 0, background: "var(--color-accent)" }}>
           <span className="font-semibold">{cartCount} item{cartCount > 1 ? "s" : ""}</span>
           <span className="mono">{euros(quote?.goodsCents ?? 0)} · Review →</span>
         </button>
       )}
 
       {showNav && (
-        <BottomNav
-          step={step}
-          liveCount={liveOrders.length}
-          totalCount={myOrders.length}
-          onShop={() => setStep("shops")}
-          onOrders={() => setStep("orders")}
-        />
+        <nav className="fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-md border-t border-line bg-surface">
+          <Tab label="Order" icon="🛍️" active={["shops","menu","cart"].includes(step)} onClick={() => setStep("shops")} />
+          <Tab label="My orders" icon="📦" active={["orders","tracking"].includes(step)}
+            onClick={() => setStep("orders")}
+            badge={liveOrders.length || myOrders.length || undefined} live={liveOrders.length > 0} />
+        </nav>
       )}
     </main>
   );
 }
 
-/* ------------------------------ bottom nav ------------------------------ */
-
-function BottomNav({
-  step, liveCount, totalCount, onShop, onOrders,
-}: {
-  step: Step; liveCount: number; totalCount: number;
-  onShop: () => void; onOrders: () => void;
-}) {
-  const onShopTab = ["shops", "menu", "cart"].includes(step);
-  const onOrdersTab = ["orders", "tracking"].includes(step);
-  return (
-    <nav className="fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-md border-t border-line bg-surface">
-      <Tab label="Order" icon="🛍️" active={onShopTab} onClick={onShop} />
-      <Tab
-        label="My orders" icon="📦" active={onOrdersTab} onClick={onOrders}
-        badge={liveCount > 0 ? liveCount : totalCount > 0 ? totalCount : undefined}
-        badgeLive={liveCount > 0}
-      />
-    </nav>
-  );
-}
-
-function Tab({
-  label, icon, active, onClick, badge, badgeLive,
-}: {
-  label: string; icon: string; active: boolean; onClick: () => void;
-  badge?: number; badgeLive?: boolean;
+function Tab({ label, icon, active, onClick, badge, live }: {
+  label: string; icon: string; active: boolean; onClick: () => void; badge?: number; live?: boolean;
 }) {
   return (
-    <button
-      onClick={onClick}
-      aria-current={active ? "page" : undefined}
+    <button onClick={onClick} aria-current={active ? "page" : undefined}
       className="relative flex flex-1 flex-col items-center gap-0.5 py-2.5"
-      style={{ color: active ? "var(--color-accent)" : "var(--color-muted)" }}
-    >
+      style={{ color: active ? "var(--color-accent)" : "var(--color-muted)" }}>
       <span className="text-lg leading-none">{icon}</span>
       <span className="text-xs font-semibold">{label}</span>
       {badge !== undefined && (
-        <span
-          className="mono absolute right-[26%] top-1.5 min-w-[18px] rounded-full px-1 text-[10px] font-bold leading-[18px] text-white"
-          style={{ background: badgeLive ? "var(--color-accent)" : "var(--color-muted)" }}
-        >
-          {badge}
-        </span>
+        <span className="mono absolute right-[26%] top-1.5 min-w-[18px] rounded-full px-1 text-[10px] font-bold leading-[18px] text-white"
+          style={{ background: live ? "var(--color-accent)" : "var(--color-muted)" }}>{badge}</span>
       )}
-      {active && (
-        <span className="absolute inset-x-6 top-0 h-0.5 rounded-full" style={{ background: "var(--color-accent)" }} />
-      )}
+      {active && <span className="absolute inset-x-6 top-0 h-0.5 rounded-full" style={{ background: "var(--color-accent)" }} />}
     </button>
-  );
-}
-
-/* ----------------------------- confirm dialog --------------------------- */
-
-function ConfirmDialog({
-  title, body, confirmLabel, onConfirm, onCancel,
-}: Confirmation & { onCancel: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-4">
-      <div className="w-full max-w-md rounded-xl bg-surface p-5">
-        <h2 className="text-lg font-bold">{title}</h2>
-        <p className="mt-1.5 text-sm text-ink-2">{body}</p>
-        <div className="mt-5 grid grid-cols-2 gap-2">
-          <button onClick={onCancel} className="rounded-lg border border-line py-3 font-semibold">
-            Keep as is
-          </button>
-          <button
-            onClick={onConfirm}
-            className="rounded-lg py-3 font-semibold text-white"
-            style={{ background: "var(--color-alert)" }}
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
 
 /* -------------------------------- header -------------------------------- */
 
-function Header({
-  flight, waypoint, now, connected, locked, onChangeFlight,
-}: {
-  flight: Flight | null; waypoint: Waypoint | null; now: number;
-  connected: boolean; locked: boolean; onChangeFlight: () => void;
+function Header({ flight, location, now, locked, onChangeFlight, onChangeLocation }: {
+  flight: Flight | null; location: LocationChoice | null; now: number; locked: boolean;
+  onChangeFlight: () => void; onChangeLocation: () => void;
 }) {
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-surface/95 backdrop-blur">
@@ -424,9 +329,7 @@ function Header({
               <span className="text-sm text-ink-2">{flight.destinationCode}</span>
               <span className="mono rounded bg-surface-2 px-1.5 py-0.5 text-xs">Gate {flight.gate}</span>
             </div>
-          ) : (
-            <div className="mt-0.5 text-sm text-muted">Scan your boarding pass</div>
-          )}
+          ) : <div className="mt-0.5 text-sm text-muted">Choose your flight</div>}
         </div>
         <div className="text-right">
           {flight && (
@@ -434,188 +337,162 @@ function Header({
               <div className="mono text-sm font-semibold" style={{ color: "var(--color-accent)" }}>
                 Boards {inMinutes(flight.boardingAt, now)}
               </div>
-              {locked ? (
-                <span className="eyebrow" title="You have an order in progress">🔒 order in progress</span>
-              ) : (
-                <button onClick={onChangeFlight} className="eyebrow underline">change flight</button>
-              )}
+              {locked
+                ? <span className="eyebrow">🔒 order in progress</span>
+                : <button onClick={onChangeFlight} className="eyebrow underline">change flight</button>}
             </>
           )}
-          {!connected && <div className="eyebrow" style={{ color: "var(--color-alert)" }}>offline</div>}
         </div>
       </div>
-      {waypoint && (
-        <div className="border-t border-line bg-accent-soft px-5 py-1.5">
+      {location && (
+        <button onClick={onChangeLocation}
+          className="flex w-full items-center justify-between border-t border-line bg-accent-soft px-5 py-1.5 text-left">
           <span className="mono text-xs" style={{ color: "var(--color-accent)" }}>
-            Delivering to {waypoint.name}
+            📍 {location.label}
           </span>
-        </div>
+          <span className="mono text-[10px] underline" style={{ color: "var(--color-accent)" }}>change</span>
+        </button>
       )}
     </header>
   );
 }
 
-/* ------------------------------ orders list ----------------------------- */
+/* --------------------------- location picker ---------------------------- */
 
-function OrdersList({
-  orders, snap, now, missingCount, onOpen, onForget, onShop,
-}: {
-  orders: Order[];
-  snap: NonNullable<ReturnType<typeof useSnapshot>["snap"]>;
-  now: number; missingCount: number;
-  onOpen: (o: Order) => void; onForget: () => void; onShop: () => void;
+function LocationPicker({ cat, current, onClose, onPick }: {
+  cat: Catalogue; current: LocationChoice | null;
+  onClose: () => void; onPick: (l: LocationChoice) => void;
 }) {
-  const live = orders.filter((o) => LIVE.includes(o.state));
-  const past = orders.filter((o) => !LIVE.includes(o.state));
+  const [mode, setMode] = useState<"pin" | "gate" | "code">(current?.kind === "pin" ? "pin" : "gate");
+  const [pin, setPin] = useState<{ x: number; y: number } | null>(
+    current?.pinX != null ? { x: current.pinX, y: current.pinY! } : null);
+  const [code, setCode] = useState("");
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const gates = cat.waypoints.filter((w) => w.kind === "gate" && w.zone === "airside-schengen");
+
+  const submitCode = async () => {
+    setBusy(true); setCodeError(null);
+    try {
+      const r = await (await fetch(`/api/v1/seat/${encodeURIComponent(code.trim())}`)).json();
+      if (r.error) throw new Error(r.error);
+      const s = r.seat as Seat;
+      onPick({
+        kind: "seat", seatId: s.id,
+        label: `Seat ${s.seatLabel}${s.gate ? ` · gate ${s.gate}` : ""}`,
+        detail: `${s.walkMetres.toFixed(1)} m from where the unit stops`,
+      });
+    } catch (e) {
+      setCodeError(e instanceof Error ? e.message : "That code is not recognised");
+    } finally { setBusy(false); }
+  };
 
   return (
-    <section className="px-5 py-6">
-      <h1 className="text-2xl font-bold tracking-tight">My orders</h1>
-      <p className="mt-1 text-sm text-ink-2">
-        Everything you&rsquo;ve ordered on this device. Nothing here is ever lost by navigating away.
-      </p>
-
-      {orders.length === 0 && missingCount === 0 && (
-        <div className="mt-8 rounded-lg border border-dashed border-line-strong bg-surface p-8 text-center">
-          <div className="text-4xl">📦</div>
-          <p className="mt-3 text-ink-2">No orders yet.</p>
-          <button
-            onClick={onShop}
-            className="mt-4 rounded-lg px-5 py-3 font-semibold text-white"
-            style={{ background: "var(--color-accent)" }}
-          >
-            Browse the shops
-          </button>
+    <div className="fixed inset-0 z-30 flex flex-col bg-ground">
+      <div className="flex items-center justify-between border-b border-line bg-surface px-5 py-3">
+        <div>
+          <div className="eyebrow">Where should we bring it?</div>
+          <div className="text-sm font-semibold">Set your delivery point</div>
         </div>
-      )}
-
-      {live.length > 0 && (
-        <>
-          <div className="eyebrow mt-6">In progress</div>
-          <div className="mt-2 space-y-2">
-            {live.map((o) => <OrderRow key={o.id} order={o} snap={snap} now={now} onOpen={onOpen} />)}
-          </div>
-        </>
-      )}
-
-      {past.length > 0 && (
-        <>
-          <div className="eyebrow mt-6">Completed</div>
-          <div className="mt-2 space-y-2">
-            {past.map((o) => <OrderRow key={o.id} order={o} snap={snap} now={now} onOpen={onOpen} />)}
-          </div>
-        </>
-      )}
-
-      {missingCount > 0 && (
-        <div
-          className="mt-6 rounded-lg p-4"
-          style={{ background: "var(--color-signal-soft)", borderLeft: "3px solid var(--color-signal)" }}
-        >
-          <div className="mono text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-signal)" }}>
-            {missingCount} order{missingCount > 1 ? "s" : ""} no longer on the system
-          </div>
-          <p className="mt-1 text-sm text-ink-2">
-            The demo scenario was reset. Your remaining orders are unaffected.
-          </p>
-          <button onClick={onForget} className="mono mt-2 text-xs underline">clear them from this list</button>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function OrderRow({
-  order, snap, now, onOpen,
-}: {
-  order: Order;
-  snap: NonNullable<ReturnType<typeof useSnapshot>["snap"]>;
-  now: number; onOpen: (o: Order) => void;
-}) {
-  const copy = STATE_COPY[order.state];
-  const merchant = snap.merchants.find((m) => m.id === order.merchantId);
-  const unit = snap.units.find((u) => u.id === order.robotId);
-  const isLive = LIVE.includes(order.state);
-  const arrived = order.state === "ARRIVED" || order.state === "NO_SHOW";
-
-  return (
-    <button
-      onClick={() => onOpen(order)}
-      className="w-full rounded-lg border bg-surface p-4 text-left"
-      style={{
-        borderColor: arrived ? "var(--color-accent)" : "var(--color-line)",
-        borderWidth: arrived ? 2 : 1,
-      }}
-    >
-      <div className="flex items-baseline justify-between">
-        <span className="mono text-xs text-muted">{order.ref}</span>
-        <span className="mono text-xs text-muted">{merchant?.name}</span>
+        <button onClick={onClose} className="mono rounded-lg border border-line px-4 py-2 text-sm">close</button>
       </div>
-      <div className="mt-1 flex items-baseline justify-between gap-3">
-        <span className="font-semibold" style={{ color: arrived ? "var(--color-accent)" : undefined }}>
-          {copy.label}
-        </span>
-        <span className="mono text-sm">{euros(order.totalCents)}</span>
+
+      <div className="flex gap-1 border-b border-line bg-surface px-3">
+        {([["pin","Drop a pin"],["gate","Pick a gate"],["code","Seat code"]] as const).map(([k, label]) => (
+          <button key={k} onClick={() => setMode(k)}
+            className="mono border-b-2 px-3 py-2 text-xs"
+            style={{ borderColor: mode === k ? "var(--color-ink)" : "transparent",
+                     color: mode === k ? "var(--color-ink)" : "var(--color-muted)" }}>{label}</button>
+        ))}
       </div>
-      <div className="mt-1 truncate text-xs text-ink-2">
-        {order.lines.map((l) => `${l.qty}× ${l.name}`).join(", ")}
-      </div>
-      {isLive && (
-        <div className="mt-2 flex items-center justify-between">
-          <div className="h-1 flex-1 overflow-hidden rounded-full bg-surface-2">
-            <div
-              className="h-full rounded-full transition-all duration-700"
-              style={{ width: `${Math.round(progressOf(order.state) * 100)}%`, background: "var(--color-accent)" }}
-            />
+
+      <div className="no-bar flex-1 overflow-y-auto">
+        {mode === "pin" && (
+          <div className="p-4">
+            <p className="text-sm text-ink-2">
+              Tap the map where you are sitting. We bring it to the nearest point the unit can
+              reach and tell you how far that is.
+            </p>
+            <div className="mt-3 rounded-lg border border-line bg-surface p-3">
+              <TerminalMap waypoints={cat.waypoints} edges={cat.edges} zones={["airside-schengen"]}
+                pin={pin} onPinDrop={(x, y) => setPin({ x, y })} showLabels />
+            </div>
+            {pin && (
+              <button onClick={() => onPick({
+                  kind: "pin", pinX: pin.x, pinY: pin.y,
+                  label: "Pin on the map", detail: "We will confirm the exact walk at checkout",
+                })}
+                className="mt-4 w-full rounded-lg py-3.5 font-semibold text-white"
+                style={{ background: "var(--color-accent)" }}>
+                Deliver here
+              </button>
+            )}
           </div>
-          <span className="mono ml-3 text-xs" style={{ color: "var(--color-accent)" }}>
-            {arrived ? `code ${order.handoverCode}`
-              : order.state === "IN_TRANSIT" && unit?.etaSeconds ? `${mmss(unit.etaSeconds)} away`
-              : inMinutes(order.promise.deliverBy, now)}
-          </span>
-        </div>
-      )}
-    </button>
+        )}
+
+        {mode === "gate" && (
+          <div className="space-y-2 p-4">
+            {gates.map((w) => (
+              <button key={w.id}
+                onClick={() => onPick({ kind: "waypoint", waypointId: w.id, label: w.name, detail: w.landmark })}
+                className="w-full rounded-lg border bg-surface p-3 text-left"
+                style={{ borderColor: current?.waypointId === w.id ? "var(--color-accent)" : "var(--color-line)",
+                         borderWidth: current?.waypointId === w.id ? 2 : 1 }}>
+                <div className="font-medium">{w.name}</div>
+                <div className="text-xs text-muted">{w.landmark}</div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {mode === "code" && (
+          <div className="p-4">
+            <p className="text-sm text-ink-2">
+              Every seat has a printed code. Scanning its QR opens this app with the seat already
+              set — or type the code here.
+            </p>
+            <input value={code} onChange={(e) => setCode(e.target.value)}
+              placeholder="Seat code from the sticker"
+              className="mono mt-3 w-full rounded border border-line bg-surface px-3 py-3" />
+            {codeError && <p className="mt-2 text-sm" style={{ color: "var(--color-alert)" }}>{codeError}</p>}
+            <button onClick={submitCode} disabled={busy || !code.trim()}
+              className="mt-3 w-full rounded-lg py-3.5 font-semibold text-white disabled:opacity-40"
+              style={{ background: "var(--color-accent)" }}>
+              {busy ? "Checking…" : "Use this seat"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
 /* ----------------------------- flight picker ---------------------------- */
 
-function FlightPicker({
-  flights, now, onPick,
-}: { flights: Flight[]; now: number; onPick: (f: Flight) => void }) {
+function FlightPicker({ flights, now, onPick }: { flights: Flight[]; now: number; onPick: (f: Flight) => void }) {
   return (
     <section className="px-5 py-6">
-      <h1 className="text-2xl font-bold tracking-tight">Scan your boarding pass</h1>
+      <h1 className="text-2xl font-bold tracking-tight">Which flight are you on?</h1>
       <p className="mt-2 text-sm text-ink-2">
-        We use your flight to make sure we can reach you before boarding. Nothing to install.
+        We use it to be sure we can reach you before boarding. Nothing to install.
       </p>
-      <div className="mt-4 rounded-lg border border-dashed border-line-strong bg-surface p-4 text-center">
-        <div className="text-3xl">📷</div>
-        <div className="eyebrow mt-2">camera scan simulated — pick a flight below</div>
-      </div>
       <div className="mt-5 space-y-2">
         {flights.map((f) => {
           const mins = Math.round((f.boardingAt - now) / 60000);
-          const tight = mins < 20;
           return (
-            <button
-              key={f.id}
-              onClick={() => onPick(f)}
-              className="flex w-full items-center justify-between rounded-lg border border-line bg-surface p-4 text-left transition hover:border-ink"
-            >
+            <button key={f.id} onClick={() => onPick(f)}
+              className="flex w-full items-center justify-between rounded-lg border border-line bg-surface p-4 text-left transition hover:border-ink">
               <div>
                 <div className="flex items-baseline gap-2">
                   <span className="mono font-semibold">{f.number}</span>
                   <span className="text-sm text-ink-2">{f.destination}</span>
                 </div>
-                <div className="eyebrow mt-1">
-                  {f.carrier} · Gate {f.gate}{f.nonEu && " · non-EU"}
-                </div>
+                <div className="eyebrow mt-1">{f.carrier} · Gate {f.gate}{f.nonEu && " · non-EU"}</div>
               </div>
               <div className="text-right">
                 <div className="mono text-sm font-semibold"
-                     style={{ color: tight ? "var(--color-alert)" : "var(--color-accent)" }}>
+                  style={{ color: mins < 20 ? "var(--color-alert)" : "var(--color-accent)" }}>
                   {mins > 0 ? `${mins} min` : "boarding"}
                 </div>
                 <div className="eyebrow">to boarding</div>
@@ -630,36 +507,22 @@ function FlightPicker({
 
 /* ------------------------------- shop list ------------------------------ */
 
-function ShopList({
-  merchants, products, onPick, onChangePoint, waypoint,
-}: {
-  merchants: Merchant[]; products: Product[];
-  onPick: (m: Merchant) => void; onChangePoint: () => void; waypoint: Waypoint | null;
+function ShopList({ merchants, products, onPick }: {
+  merchants: Merchant[]; products: Product[]; onPick: (m: Merchant) => void;
 }) {
   return (
     <section className="px-5 py-6">
       <h1 className="text-2xl font-bold tracking-tight">Order to your seat</h1>
-      {waypoint && (
-        <p className="mt-1 text-sm text-ink-2">
-          {waypoint.landmark}.{" "}
-          <button onClick={onChangePoint} className="underline" style={{ color: "var(--color-accent)" }}>
-            Change spot
-          </button>
-        </p>
-      )}
       <div className="mt-5 space-y-3">
         {merchants.map((m) => {
           const count = products.filter((p) => p.merchantId === m.id && p.available).length;
           return (
-            <button
-              key={m.id}
-              onClick={() => onPick(m)}
-              className="w-full rounded-lg border border-line bg-surface p-4 text-left transition hover:border-ink"
-              style={{ borderLeftWidth: 4, borderLeftColor: m.colour }}
-            >
+            <button key={m.id} onClick={() => onPick(m)} disabled={!m.open}
+              className="w-full rounded-lg border border-line bg-surface p-4 text-left transition hover:border-ink disabled:opacity-50"
+              style={{ borderLeftWidth: 4, borderLeftColor: m.colour }}>
               <div className="flex items-baseline justify-between">
                 <h2 className="font-semibold">{m.name}</h2>
-                <span className="mono text-xs text-muted">~{m.prepMinutes} min</span>
+                <span className="mono text-xs text-muted">{m.open ? `~${m.prepMinutes} min` : "closed"}</span>
               </div>
               <p className="mt-1 text-sm text-ink-2">{m.blurb}</p>
               <div className="eyebrow mt-2">{count} items available</div>
@@ -673,79 +536,180 @@ function ShopList({
 
 /* --------------------------------- menu --------------------------------- */
 
-function Menu({
-  merchant, products, cart, onAdd, onRemove, onBack,
-}: {
-  merchant: Merchant; products: Product[]; cart: Cart;
-  onAdd: (p: Product) => void; onRemove: (p: Product) => void; onBack: () => void;
+function MenuView({ cat, merchant, cart, setCart, onBack }: {
+  cat: Catalogue; merchant: Merchant; cart: Cart;
+  setCart: React.Dispatch<React.SetStateAction<Cart>>; onBack: () => void;
 }) {
+  const [configuring, setConfiguring] = useState<Product | null>(null);
+  const products = cat.products.filter((p) => p.merchantId === merchant.id);
+  const cats = cat.categories.filter((c) => c.merchant_id === merchant.id);
+
+  const groupsFor = (p: Product) => cat.optionGroups.filter((g) => g.product_id === p.id);
+
+  const add = (p: Product) => {
+    if (groupsFor(p).length > 0) { setConfiguring(p); return; }
+    setCart((c) => ({ ...c, [p.id]: { qty: (c[p.id]?.qty ?? 0) + 1, optionIds: c[p.id]?.optionIds ?? [] } }));
+  };
+  const remove = (p: Product) => setCart((c) => {
+    const n = (c[p.id]?.qty ?? 0) - 1;
+    const next = { ...c };
+    if (n <= 0) delete next[p.id]; else next[p.id] = { ...next[p.id], qty: n };
+    return next;
+  });
+
+  const sections = [
+    ...cats.map((c) => ({ name: c.name, items: products.filter((p) => p.categoryId === c.id) })),
+    { name: "More", items: products.filter((p) => !p.categoryId) },
+  ].filter((s) => s.items.length > 0);
+
   return (
     <section className="px-5 py-6">
       <button onClick={onBack} className="eyebrow">← all shops</button>
       <h1 className="mt-2 text-2xl font-bold tracking-tight">{merchant.name}</h1>
       <p className="mt-1 text-sm text-ink-2">{merchant.blurb}</p>
-      <div className="mt-5 space-y-2">
-        {products.map((p) => {
-          const qty = cart[p.id] ?? 0;
-          const blocked = p.ageRestricted;
-          return (
-            <div key={p.id}
-                 className={`flex items-center gap-3 rounded-lg border border-line bg-surface p-3 ${!p.available ? "opacity-45" : ""}`}>
-              <div className="grid h-11 w-11 shrink-0 place-items-center rounded bg-surface-2 text-xl">{p.emoji}</div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-baseline gap-2">
-                  <span className="truncate font-medium">{p.name}</span>
-                  <span className="mono shrink-0 text-sm">{euros(p.priceCents)}</span>
-                </div>
-                <p className="truncate text-xs text-muted">{p.description}</p>
-                {blocked && (
-                  <div className="mono mt-1 inline-block rounded px-1.5 py-0.5 text-[10px]"
-                       style={{ background: "var(--color-signal-soft)", color: "var(--color-signal)" }}>
-                    COLLECT IN STORE — AGE CHECK REQUIRED
+
+      {sections.map((s) => (
+        <div key={s.name} className="mt-5">
+          <div className="eyebrow mb-2">{s.name}</div>
+          <div className="space-y-2">
+            {s.items.map((p) => {
+              const qty = cart[p.id]?.qty ?? 0;
+              return (
+                <div key={p.id}
+                  className={`flex items-center gap-3 rounded-lg border border-line bg-surface p-3 ${!p.available ? "opacity-45" : ""}`}>
+                  <div className="grid h-11 w-11 shrink-0 place-items-center rounded bg-surface-2 text-xl">{p.emoji}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className="truncate font-medium">{p.name}</span>
+                      <span className="mono shrink-0 text-sm">{euros(p.priceCents)}</span>
+                    </div>
+                    <p className="truncate text-xs text-muted">{p.description}</p>
+                    {p.allergens && p.allergens.length > 0 && (
+                      <p className="mono text-[10px] text-muted">contains {p.allergens.join(", ")}</p>
+                    )}
+                    {p.ageRestricted && (
+                      <div className="mono mt-1 inline-block rounded px-1.5 py-0.5 text-[10px]"
+                        style={{ background: "var(--color-signal-soft)", color: "var(--color-signal)" }}>
+                        COLLECT IN STORE — AGE CHECK REQUIRED
+                      </div>
+                    )}
                   </div>
-                )}
-                {!p.available && <div className="eyebrow mt-1">unavailable right now</div>}
-              </div>
-              {!blocked && p.available && (
-                <div className="flex shrink-0 items-center gap-2">
-                  {qty > 0 && (
-                    <>
-                      <button onClick={() => onRemove(p)} aria-label={`Remove one ${p.name}`}
-                              className="h-9 w-9 rounded-full border border-line text-lg leading-none">−</button>
-                      <span className="mono w-4 text-center text-sm">{qty}</span>
-                    </>
+                  {!p.ageRestricted && p.available && (
+                    <div className="flex shrink-0 items-center gap-2">
+                      {qty > 0 && (
+                        <>
+                          <button onClick={() => remove(p)} aria-label={`Remove one ${p.name}`}
+                            className="h-9 w-9 rounded-full border border-line text-lg leading-none">−</button>
+                          <span className="mono w-4 text-center text-sm">{qty}</span>
+                        </>
+                      )}
+                      <button onClick={() => add(p)} aria-label={`Add ${p.name}`}
+                        className="h-9 w-9 rounded-full text-lg leading-none text-white"
+                        style={{ background: "var(--color-accent)" }}>+</button>
+                    </div>
                   )}
-                  <button onClick={() => onAdd(p)} aria-label={`Add ${p.name}`}
-                          className="h-9 w-9 rounded-full text-lg leading-none text-white"
-                          style={{ background: "var(--color-accent)" }}>+</button>
                 </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+
+      {configuring && (
+        <OptionSheet cat={cat} product={configuring} onClose={() => setConfiguring(null)}
+          onConfirm={(optionIds) => {
+            setCart((c) => ({ ...c, [configuring.id]: { qty: (c[configuring.id]?.qty ?? 0) + 1, optionIds } }));
+            setConfiguring(null);
+          }} />
+      )}
     </section>
+  );
+}
+
+function OptionSheet({ cat, product, onClose, onConfirm }: {
+  cat: Catalogue; product: Product; onClose: () => void; onConfirm: (optionIds: string[]) => void;
+}) {
+  const groups = cat.optionGroups.filter((g) => g.product_id === product.id);
+  const [chosen, setChosen] = useState<Record<string, string[]>>(() => {
+    const init: Record<string, string[]> = {};
+    for (const g of groups) {
+      const first = cat.options.find((o) => o.group_id === g.id && o.available);
+      init[g.id] = g.min_select > 0 && first ? [first.id] : [];
+    }
+    return init;
+  });
+
+  const toggle = (groupId: string, optionId: string, max: number) => {
+    setChosen((c) => {
+      const cur = c[groupId] ?? [];
+      if (cur.includes(optionId)) return { ...c, [groupId]: cur.filter((x) => x !== optionId) };
+      if (max === 1) return { ...c, [groupId]: [optionId] };
+      if (cur.length >= max) return c;
+      return { ...c, [groupId]: [...cur, optionId] };
+    });
+  };
+
+  const all = Object.values(chosen).flat();
+  const delta = all.reduce((s, id) => s + (cat.options.find((o) => o.id === id)?.price_delta_cents ?? 0), 0);
+  const incomplete = groups.some((g) => (chosen[g.id] ?? []).length < g.min_select);
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-end justify-center bg-ink/40">
+      <div className="w-full max-w-md rounded-t-xl bg-surface p-5">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-lg font-bold">{product.name}</h2>
+          <button onClick={onClose} className="mono text-sm underline">cancel</button>
+        </div>
+        {groups.map((g) => (
+          <div key={g.id} className="mt-4">
+            <div className="eyebrow">{g.name}{g.min_select > 0 && " · required"}</div>
+            <div className="mt-2 space-y-1.5">
+              {cat.options.filter((o) => o.group_id === g.id && o.available).map((o) => {
+                const on = (chosen[g.id] ?? []).includes(o.id);
+                return (
+                  <button key={o.id} onClick={() => toggle(g.id, o.id, g.max_select)}
+                    className="flex w-full items-center justify-between rounded-lg border p-3 text-left"
+                    style={{ borderColor: on ? "var(--color-accent)" : "var(--color-line)", borderWidth: on ? 2 : 1 }}>
+                    <span>{o.name}</span>
+                    <span className="mono text-sm text-muted">
+                      {o.price_delta_cents ? `+${euros(o.price_delta_cents)}` : "—"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        <button onClick={() => onConfirm(all)} disabled={incomplete}
+          className="mt-5 w-full rounded-lg py-3.5 font-semibold text-white disabled:opacity-40"
+          style={{ background: "var(--color-accent)" }}>
+          Add · {euros(product.priceCents + delta)}
+        </button>
+      </div>
+    </div>
   );
 }
 
 /* --------------------------------- cart --------------------------------- */
 
-function CartView({
-  merchant, products, cart, quote, waypoint, now, error, placing,
-  onAdd, onRemove, onChangePoint, onBack, onPlace,
-}: {
-  merchant: Merchant; products: Product[]; cart: Cart; quote: Quote | null;
-  waypoint: Waypoint | null; now: number; error: string | null; placing: boolean;
-  onAdd: (p: Product) => void; onRemove: (p: Product) => void;
-  onChangePoint: () => void; onBack: () => void; onPlace: () => void;
+function CartView({ cat, merchant, cart, setCart, quote, location, error, placing, onChangeLocation, onBack, onPlace }: {
+  cat: Catalogue; merchant: Merchant; cart: Cart;
+  setCart: React.Dispatch<React.SetStateAction<Cart>>;
+  quote: Quote | null; location: LocationChoice | null; error: string | null; placing: boolean;
+  onChangeLocation: () => void; onBack: () => void; onPlace: () => void;
 }) {
-  const lines = Object.entries(cart)
-    .map(([id, qty]) => ({ product: products.find((p) => p.id === id)!, qty }))
-    .filter((l) => l.product);
-
   const refused = quote?.verdict === "REFUSE";
   const warned = quote?.verdict === "WARN";
-  const total = (quote?.goodsCents ?? 0) + (quote?.deliveryFeeCents ?? 0);
+  const lines = Object.entries(cart)
+    .map(([id, v]) => ({ product: cat.products.find((p) => p.id === id)!, ...v }))
+    .filter((l) => l.product);
+
+  const bump = (id: string, d: number) => setCart((c) => {
+    const n = (c[id]?.qty ?? 0) + d;
+    const next = { ...c };
+    if (n <= 0) delete next[id]; else next[id] = { ...next[id], qty: n };
+    return next;
+  });
 
   return (
     <section className="px-5 py-6">
@@ -753,167 +717,167 @@ function CartView({
       <h1 className="mt-2 text-2xl font-bold tracking-tight">Your order</h1>
 
       <div className="mt-4 space-y-2">
-        {lines.map(({ product, qty }) => (
-          <div key={product.id} className="flex items-center gap-3 rounded-lg border border-line bg-surface p-3">
-            <div className="grid h-10 w-10 place-items-center rounded bg-surface-2">{product.emoji}</div>
-            <div className="flex-1">
-              <div className="font-medium">{product.name}</div>
-              <div className="mono text-xs text-muted">{euros(product.priceCents)} each</div>
+        {lines.map((l) => (
+          <div key={l.product.id} className="flex items-center gap-3 rounded-lg border border-line bg-surface p-3">
+            <div className="grid h-10 w-10 place-items-center rounded bg-surface-2">{l.product.emoji}</div>
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">{l.product.name}</div>
+              {l.optionIds.length > 0 && (
+                <div className="mono text-[11px] text-muted">
+                  {l.optionIds.map((id) => cat.options.find((o) => o.id === id)?.name).filter(Boolean).join(", ")}
+                </div>
+              )}
             </div>
-            <button onClick={() => onRemove(product)} className="h-8 w-8 rounded-full border border-line">−</button>
-            <span className="mono w-4 text-center">{qty}</span>
-            <button onClick={() => onAdd(product)} className="h-8 w-8 rounded-full border border-line">+</button>
+            <button onClick={() => bump(l.product.id, -1)} className="h-8 w-8 rounded-full border border-line">−</button>
+            <span className="mono w-4 text-center">{l.qty}</span>
+            <button onClick={() => bump(l.product.id, 1)} className="h-8 w-8 rounded-full border border-line">+</button>
           </div>
         ))}
       </div>
 
-      {waypoint && (
-        <div className="mt-4 rounded-lg border border-line bg-surface p-4">
-          <div className="eyebrow">Delivering to</div>
-          <div className="mt-1 font-semibold">{waypoint.name}</div>
-          <p className="mt-1 text-sm text-ink-2">{waypoint.landmark}</p>
-          <p className="mt-2 text-xs text-muted">
-            The unit stops here, not at your seat — you&rsquo;ll walk a few steps and keep the gate in sight.
+      <div className="mt-4 rounded-lg border border-line bg-surface p-4">
+        <div className="eyebrow">Delivering to</div>
+        <div className="mt-1 font-semibold">{location?.label ?? "Not set"}</div>
+        {quote && (
+          <p className="mt-1 text-sm text-ink-2">
+            The unit stops at <strong>{quote.location.navWaypointId}</strong> — about{" "}
+            <strong>{quote.location.walkMetres.toFixed(1)} m</strong> from you.
           </p>
-          <button onClick={onChangePoint} className="mono mt-2 text-xs underline" style={{ color: "var(--color-accent)" }}>
-            choose a different spot
-          </button>
-        </div>
-      )}
+        )}
+        <button onClick={onChangeLocation} className="mono mt-2 text-xs underline" style={{ color: "var(--color-accent)" }}>
+          change delivery point
+        </button>
+      </div>
 
       <div className="mt-4 rounded-lg border border-line bg-surface p-4">
         <Row label={`${merchant.name} items`} value={euros(quote?.goodsCents ?? 0)} />
         <Row label="Delivery" value={euros(quote?.deliveryFeeCents ?? 0)} />
         <div className="mt-2 border-t border-line pt-2">
-          <Row label="Total" value={euros(total)} bold />
+          <Row label="Total" value={euros(quote?.totalCents ?? 0)} bold />
         </div>
       </div>
 
       {quote && quote.blockedItems.length > 0 && (
         <Notice tone="signal" title="Not deliverable by robot">
-          {quote.blockedItems.join(", ")} needs an age check, so it can&rsquo;t be handed over by an
-          unattended unit. Collect it in store — the rest still comes to you.
+          {quote.blockedItems.join(", ")} needs an age check, so it stays collect-in-store.
         </Notice>
       )}
-
       {quote && !refused && (
         <Notice tone={warned ? "signal" : "accent"} title={warned ? "This is tight" : "We can make it"}>
-          {quote.reason}{" "}
-          {!warned && (
-            <>Arrives by <strong className="mono">
-              {new Date(quote.promise.deliverBy).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
-            </strong>.</>
-          )}
+          {quote.reason}
         </Notice>
       )}
-
       {refused && <Notice tone="alert" title="Too tight against boarding">{quote.reason}</Notice>}
       {error && <Notice tone="alert" title="Couldn't place the order">{error}</Notice>}
 
-      <button
-        onClick={onPlace}
-        disabled={placing || refused || lines.length === 0}
+      <button onClick={onPlace} disabled={placing || refused || lines.length === 0 || !location}
         className="mt-5 w-full rounded-lg py-4 font-semibold text-white disabled:opacity-40"
-        style={{ background: refused ? "var(--color-muted)" : "var(--color-accent)" }}
-      >
-        {placing ? "Placing…" : refused ? "Not available for this flight" : `Pay ${euros(total)}`}
+        style={{ background: refused ? "var(--color-muted)" : "var(--color-accent)" }}>
+        {placing ? "Placing…" : refused ? "Not available for this flight" : `Pay ${euros(quote?.totalCents ?? 0)}`}
       </button>
       <p className="eyebrow mt-2 text-center">payment simulated · nothing is charged</p>
-      <p className="mono mt-3 text-center text-[10px] text-muted">
-        boarding {inMinutes(quote?.promise.deliverBy ?? now, now)} — recalculated live
-      </p>
     </section>
   );
 }
 
-function Row({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
-  return (
-    <div className="flex items-baseline justify-between py-0.5">
-      <span className={bold ? "font-semibold" : "text-sm text-ink-2"}>{label}</span>
-      <span className={`mono ${bold ? "font-semibold" : "text-sm"}`}>{value}</span>
-    </div>
-  );
-}
+const Row = ({ label, value, bold }: { label: string; value: string; bold?: boolean }) => (
+  <div className="flex items-baseline justify-between py-0.5">
+    <span className={bold ? "font-semibold" : "text-sm text-ink-2"}>{label}</span>
+    <span className={`mono ${bold ? "font-semibold" : "text-sm"}`}>{value}</span>
+  </div>
+);
 
-function Notice({
-  tone, title, children,
-}: { tone: "accent" | "signal" | "alert"; title: string; children: React.ReactNode }) {
-  const bg = `var(--color-${tone}-soft)`;
-  const fg = `var(--color-${tone})`;
+function Notice({ tone, title, children }: {
+  tone: "accent" | "signal" | "alert"; title: string; children: React.ReactNode;
+}) {
   return (
-    <div className="mt-4 rounded-lg p-4" style={{ background: bg, borderLeft: `3px solid ${fg}` }}>
-      <div className="mono text-xs font-semibold uppercase tracking-wider" style={{ color: fg }}>{title}</div>
+    <div className="mt-4 rounded-lg p-4"
+      style={{ background: `var(--color-${tone}-soft)`, borderLeft: `3px solid var(--color-${tone})` }}>
+      <div className="mono text-xs font-semibold uppercase tracking-wider" style={{ color: `var(--color-${tone})` }}>{title}</div>
       <p className="mt-1 text-sm text-ink-2">{children}</p>
     </div>
   );
 }
 
-/* ------------------------------ point picker ---------------------------- */
+/* ------------------------------ orders list ----------------------------- */
 
-function PointPicker({
-  snap, current, onClose, onPick,
-}: {
-  snap: NonNullable<ReturnType<typeof useSnapshot>["snap"]>;
-  current: Waypoint; onClose: () => void; onPick: (w: Waypoint) => void;
+function OrdersList({ orders, missing, now, onOpen, onForget, onShop }: {
+  orders: OrderRow[]; missing: number; now: number;
+  onOpen: (o: OrderRow) => void; onForget: () => void; onShop: () => void;
 }) {
-  const options = snap.waypoints.filter((w) => w.kind === "gate" && w.zone === "airside-schengen");
+  const live = orders.filter((o) => LIVE.includes(o.state));
+  const past = orders.filter((o) => !LIVE.includes(o.state));
   return (
-    <div className="fixed inset-0 z-30 flex flex-col bg-ground">
-      <div className="flex items-center justify-between border-b border-line bg-surface px-5 py-3">
-        <div>
-          <div className="eyebrow">Where are you sitting?</div>
-          <div className="text-sm font-semibold">Pick a delivery point</div>
+    <section className="px-5 py-6">
+      <h1 className="text-2xl font-bold tracking-tight">My orders</h1>
+      <p className="mt-1 text-sm text-ink-2">Nothing here is lost by navigating away.</p>
+
+      {orders.length === 0 && missing === 0 && (
+        <div className="mt-8 rounded-lg border border-dashed border-line-strong bg-surface p-8 text-center">
+          <div className="text-4xl">📦</div>
+          <p className="mt-3 text-ink-2">No orders yet.</p>
+          <button onClick={onShop} className="mt-4 rounded-lg px-5 py-3 font-semibold text-white"
+            style={{ background: "var(--color-accent)" }}>Browse the shops</button>
         </div>
-        <button onClick={onClose} className="mono rounded-lg border border-line px-4 py-2 text-sm">done</button>
-      </div>
-      <div className="border-b border-line bg-surface px-3 py-4">
-        <TerminalMap
-          waypoints={snap.waypoints} edges={snap.edges} zones={["airside-schengen"]}
-          highlightWaypointId={current.id} selectableKinds={["gate"]} onSelect={onPick}
-        />
-      </div>
-      <div className="no-bar flex-1 overflow-y-auto px-5 py-4">
-        <p className="mb-3 text-xs text-muted">
-          This only affects your next order. Orders already placed keep the spot you chose for them.
-        </p>
-        <div className="space-y-2">
-          {options.map((w) => (
-            <button
-              key={w.id} onClick={() => onPick(w)}
-              className="w-full rounded-lg border bg-surface p-3 text-left"
-              style={{
-                borderColor: w.id === current.id ? "var(--color-accent)" : "var(--color-line)",
-                borderWidth: w.id === current.id ? 2 : 1,
-              }}
-            >
-              <div className="font-medium">{w.name}</div>
-              <div className="text-xs text-muted">{w.landmark}</div>
-            </button>
-          ))}
+      )}
+
+      {live.length > 0 && <><div className="eyebrow mt-6">In progress</div>
+        <div className="mt-2 space-y-2">{live.map((o) => <OrderRowCard key={o.id} order={o} now={now} onOpen={onOpen} />)}</div></>}
+      {past.length > 0 && <><div className="eyebrow mt-6">Completed</div>
+        <div className="mt-2 space-y-2">{past.map((o) => <OrderRowCard key={o.id} order={o} now={now} onOpen={onOpen} />)}</div></>}
+
+      {missing > 0 && (
+        <div className="mt-6 rounded-lg p-4"
+          style={{ background: "var(--color-signal-soft)", borderLeft: "3px solid var(--color-signal)" }}>
+          <div className="mono text-xs font-semibold uppercase" style={{ color: "var(--color-signal)" }}>
+            {missing} order{missing > 1 ? "s" : ""} no longer on the system
+          </div>
+          <button onClick={onForget} className="mono mt-2 text-xs underline">clear them from this list</button>
         </div>
+      )}
+    </section>
+  );
+}
+
+function OrderRowCard({ order, now, onOpen }: { order: OrderRow; now: number; onOpen: (o: OrderRow) => void }) {
+  const copy = STATE_COPY[order.state];
+  const arrived = order.state === "ARRIVED" || order.state === "NO_SHOW";
+  return (
+    <button onClick={() => onOpen(order)} className="w-full rounded-lg border bg-surface p-4 text-left"
+      style={{ borderColor: arrived ? "var(--color-accent)" : "var(--color-line)", borderWidth: arrived ? 2 : 1 }}>
+      <div className="flex items-baseline justify-between">
+        <span className="mono text-xs text-muted">{order.ref}</span>
+        <span className="mono text-xs text-muted">{order.merchant_name}</span>
       </div>
-    </div>
+      <div className="mt-1 flex items-baseline justify-between gap-3">
+        <span className="font-semibold" style={{ color: arrived ? "var(--color-accent)" : undefined }}>{copy.label}</span>
+        <span className="mono text-sm">{euros(order.total_cents)}</span>
+      </div>
+      <div className="mt-1 truncate text-xs text-ink-2">
+        {order.lines.map((l) => `${l.qty}× ${l.name}`).join(", ")}
+      </div>
+      {LIVE.includes(order.state) && (
+        <div className="mt-2 flex items-center justify-between">
+          <div className="h-1 flex-1 overflow-hidden rounded-full bg-surface-2">
+            <div className="h-full rounded-full transition-all duration-700"
+              style={{ width: `${Math.round(progressOf(order.state) * 100)}%`, background: "var(--color-accent)" }} />
+          </div>
+          {arrived && <span className="mono ml-3 text-xs" style={{ color: "var(--color-accent)" }}>code {order.handover_code}</span>}
+        </div>
+      )}
+      <span className="sr-only">{now}</span>
+    </button>
   );
 }
 
 /* -------------------------------- tracking ------------------------------ */
 
-function Tracking({
-  order, snap, now, onBack, onShopAgain,
-}: {
-  order: Order;
-  snap: NonNullable<ReturnType<typeof useSnapshot>["snap"]>;
-  now: number; onBack: () => void; onShopAgain: () => void;
+function Tracking({ order, cat, now, onBack, onShopAgain }: {
+  order: OrderRow; cat: Catalogue; now: number; onBack: () => void; onShopAgain: () => void;
 }) {
   const copy = STATE_COPY[order.state];
-  const unit = snap.units.find((u) => u.id === order.robotId);
-  const waypoint = snap.waypoints.find((w) => w.id === order.deliveryWaypointId);
-  const merchant = snap.merchants.find((m) => m.id === order.merchantId);
-  const flight = snap.flights.find((f) => f.id === order.flightId);
-  const progress = progressOf(order.state);
   const arrived = order.state === "ARRIVED" || order.state === "NO_SHOW";
-  const done = ["COMPLETED", "REJECTED", "ABORTED"].includes(order.state);
-  const gateChanged = order.history.some((h) => h.note?.startsWith("Gate change"));
+  const done = ["COMPLETED", "REJECTED", "CANCELLED", "ABORTED"].includes(order.state);
 
   return (
     <section className="px-5 py-6">
@@ -924,110 +888,59 @@ function Tracking({
 
       <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-surface-2">
         <div className="h-full rounded-full transition-all duration-700"
-             style={{
-               width: `${Math.round(progress * 100)}%`,
-               background: done && order.state !== "COMPLETED" ? "var(--color-alert)" : "var(--color-accent)",
-             }} />
+          style={{ width: `${Math.round(progressOf(order.state) * 100)}%`,
+                   background: done && order.state !== "COMPLETED" ? "var(--color-alert)" : "var(--color-accent)" }} />
       </div>
 
       {arrived && (
         <div className="mt-5 rounded-lg p-5 text-center" style={{ background: "var(--color-accent)" }}>
           <div className="mono text-xs uppercase tracking-widest text-white/80">Enter this on the screen</div>
-          <div className="mono mt-1 text-5xl font-bold tracking-[0.2em] text-white">{order.handoverCode}</div>
-          <div className="mt-2 text-sm text-white/90">{waypoint?.landmark}</div>
+          <div className="mono mt-1 text-5xl font-bold tracking-[0.2em] text-white">{order.handover_code}</div>
+          <div className="mt-2 text-sm text-white/90">{order.nav_waypoint_landmark}</div>
         </div>
       )}
 
-      {gateChanged && !done && (
-        <Notice tone="signal" title="Your gate changed">
-          {flight?.number} moved to gate {flight?.gate}. We rerouted — your order is still coming.
-        </Notice>
-      )}
-      {order.slaMissed && (
+      {order.sla_missed && (
         <Notice tone="alert" title="We were late">Your delivery fee has been refunded automatically.</Notice>
-      )}
-      {order.state === "NO_SHOW" && (
-        <Notice tone="signal" title="We couldn't find you">
-          The unit is holding at {waypoint?.name}. Enter your code when you get there.
-        </Notice>
-      )}
-
-      {!done && unit && (
-        <div className="mt-5 rounded-lg border border-line bg-surface p-4">
-          <div className="flex items-baseline justify-between">
-            <span className="eyebrow">{unit.name}</span>
-            <span className="mono text-sm font-semibold" style={{ color: "var(--color-accent)" }}>
-              {order.state === "IN_TRANSIT" && unit.etaSeconds
-                ? `${mmss(unit.etaSeconds)} away`
-                : unit.status.replace(/_/g, " ")}
-            </span>
-          </div>
-          <div className="mt-3">
-            <TerminalMap
-              waypoints={snap.waypoints} edges={snap.edges} zones={["airside-schengen"]}
-              units={[unit]} highlightWaypointId={order.deliveryWaypointId} showLabels
-            />
-          </div>
-        </div>
-      )}
-
-      {!done && (
-        <div className="mt-4 flex items-center gap-3 rounded-lg border p-4"
-             style={{ borderColor: "var(--color-line)", background: "var(--color-plum-soft)" }}>
-          <span className="text-2xl">🫒</span>
-          <div className="min-w-0">
-            <div className="mono text-[10px] uppercase tracking-widest" style={{ color: "var(--color-plum)" }}>
-              Sponsored · Aelia Duty Free
-            </div>
-            <p className="text-sm text-ink-2">
-              Istrian olive oil, award-winning — delivered to your gate before you board.
-            </p>
-          </div>
-        </div>
       )}
 
       <div className="mt-5 rounded-lg border border-line bg-surface p-4">
+        <div className="eyebrow">Delivery point</div>
+        <div className="mt-1 font-semibold">{order.nav_waypoint_name}</div>
+        <p className="mt-1 text-sm text-ink-2">
+          {order.location_note} · {Number(order.walk_metres).toFixed(1)} m from where the unit stops
+        </p>
+        <div className="mt-3">
+          <TerminalMap waypoints={cat.waypoints} edges={cat.edges} zones={["airside-schengen"]}
+            highlightWaypointId={order.lines.length ? undefined : undefined} showLabels />
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-lg border border-line bg-surface p-4">
         <div className="eyebrow">Order</div>
         <div className="mt-2 space-y-1">
-          {order.lines.map((l) => (
-            <div key={l.productId} className="flex justify-between text-sm">
+          {order.lines.map((l, i) => (
+            <div key={i} className="flex justify-between text-sm">
               <span>{l.emoji} {l.qty} × {l.name}</span>
-              <span className="mono">{euros(l.unitPriceCents * l.qty)}</span>
+              <span className="mono">{euros(l.unit_price_cents * l.qty)}</span>
             </div>
           ))}
           <div className="flex justify-between border-t border-line pt-1 text-sm">
             <span className="text-muted">Delivery</span>
-            <span className="mono text-muted">{euros(order.deliveryFeeCents)}</span>
+            <span className="mono text-muted">{euros(order.delivery_fee_cents)}</span>
           </div>
           <div className="flex justify-between font-semibold">
-            <span>Total</span>
-            <span className="mono">{euros(order.totalCents)}</span>
+            <span>Total</span><span className="mono">{euros(order.total_cents)}</span>
           </div>
         </div>
-        <div className="eyebrow mt-3">from {merchant?.name}</div>
+        <div className="eyebrow mt-3">from {order.merchant_name}</div>
       </div>
 
-      <details className="mt-4 rounded-lg border border-line bg-surface p-4">
-        <summary className="eyebrow cursor-pointer">Order history</summary>
-        <ol className="mono mt-3 space-y-1 text-xs text-ink-2">
-          {order.history.map((h, i) => (
-            <li key={i}>
-              {new Date(h.at).toLocaleTimeString("en-GB")} · {h.state}{h.note ? ` — ${h.note}` : ""}
-            </li>
-          ))}
-        </ol>
-      </details>
-
       {done && (
-        <button onClick={onShopAgain}
-                className="mt-5 w-full rounded-lg py-4 font-semibold text-white"
-                style={{ background: "var(--color-accent)" }}>
-          Order something else
-        </button>
+        <button onClick={onShopAgain} className="mt-5 w-full rounded-lg py-4 font-semibold text-white"
+          style={{ background: "var(--color-accent)" }}>Order something else</button>
       )}
-      <p className="mono mt-4 text-center text-[10px] text-muted">
-        {new Date(now).toLocaleTimeString("en-GB")}
-      </p>
+      <p className="mono mt-4 text-center text-[10px] text-muted">{new Date(now).toLocaleTimeString("en-GB")}</p>
     </section>
   );
 }
