@@ -99,6 +99,11 @@ Both are generated from `supabase/migrations/` and verified against a clean
 database. Run them on a **new, empty project** — they create tables rather than
 alter them.
 
+**Already ran the schema before the operations dashboard existed?** Don't
+re-run `01_schema.sql`. Run `supabase/setup/03_upgrade_admin.sql` instead — it
+adds flight-board rebasing and the whole admin layer, and is idempotent, so
+running it twice changes nothing the second time.
+
 Afterwards, create the shop logins against your cloud project:
 
 ```bash
