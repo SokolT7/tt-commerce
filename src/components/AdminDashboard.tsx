@@ -74,7 +74,7 @@ async function loadAll(db: DB) {
 const LIVE_STATES = ["DRAFT","VALIDATED","AUTHORIZED","SENT_TO_MERCHANT","ACCEPTED","PREPARING",
   "READY","ROBOT_ASSIGNED","AT_MERCHANT","LOADED","IN_TRANSIT","ARRIVED","NO_SHOW"];
 
-export function AdminDashboard({ name }: { name: string }) {
+export function AdminDashboard({ name, fidsConfigured }: { name: string; fidsConfigured: boolean }) {
   const router = useRouter();
   const now = useNow();
   const [tab, setTab] = useState<Tab>("overview");
@@ -111,7 +111,7 @@ export function AdminDashboard({ name }: { name: string }) {
       {tab === "shops" && <ShopsTab shops={shops} onDone={reload} />}
       {tab === "ops" && <OpsTab robots={robots} compartments={compartments} incidents={incidents}
         waypoints={waypoints} edges={edges} orders={orders} />}
-      {tab === "terminal" && <TerminalTab o={overview} flights={flights} now={now} onDone={reload} />}
+      {tab === "terminal" && <TerminalTab o={overview} flights={flights} now={now} onDone={reload} fidsConfigured={fidsConfigured} />}
     </Shell>
   );
 }
@@ -552,11 +552,27 @@ function OpsTab({ robots, compartments, incidents, waypoints, edges, orders }: {
 
 /* ------------------------------------------------------------- terminal -- */
 
-function TerminalTab({ o, flights, now, onDone }: {
-  o: Overview; flights: Flight[]; now: number; onDone: () => void;
+function TerminalTab({ o, flights, now, onDone, fidsConfigured }: {
+  o: Overview; flights: Flight[]; now: number; onDone: () => void; fidsConfigured: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
+
+  const syncFids = async () => {
+    setSyncing(true); setErr(null); setSyncNote(null);
+    try {
+      const res = await fetch("/api/v1/fids/sync", { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Sync failed");
+      setSyncNote(`${body.synced} departures pulled from ${body.airport}` +
+        (body.removed ? `, ${body.removed} stale removed` : ""));
+      onDone();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Sync failed");
+    } finally { setSyncing(false); }
+  };
   const drifted = flights.length > 0 && new Date(flights[flights.length - 1].boarding_at).getTime() < now;
 
   const rebase = async () => {
@@ -574,20 +590,40 @@ function TerminalTab({ o, flights, now, onDone }: {
         <Tile label="Units in fleet" value={String(o.robots_total)} />
       </div>
 
-      {drifted && (
-        <div className="mt-6">
-          <Notice tone="signal" title="The flight board has drifted into the past" icon={<IconAlert size={16} />}>
-            Until a live feed is connected the seeded board is fixed in time. Rebasing shifts every
-            departure forward, keeping the spacing between them.
+      <div className="mt-6 space-y-3">
+        {fidsConfigured ? (
+          <Notice tone="accent" title="Live flight data is connected" icon={<IconCheck size={16} />}>
+            Departures are pulled from the Cirium FlightStats FIDS feed. Boarding times are derived
+            from scheduled gate departure — that feed publishes departure, not boarding.
           </Notice>
-        </div>
-      )}
+        ) : (
+          <Notice tone="signal" title="Using the seeded flight board" icon={<IconPlane size={16} />}>
+            Add <span className="font-medium">FLIGHTSTATS_APP_ID</span> and{" "}
+            <span className="font-medium">FLIGHTSTATS_APP_KEY</span> to <span className="font-medium">.env.local</span>{" "}
+            to pull the real board, then restart the server.
+          </Notice>
+        )}
+        {drifted && !fidsConfigured && (
+          <Notice tone="signal" title="The board has drifted into the past" icon={<IconAlert size={16} />}>
+            The seeded board is fixed in time. Rebasing shifts every departure forward, keeping the
+            spacing between them.
+          </Notice>
+        )}
+        {syncNote && <Notice tone="accent" title="Synced" icon={<IconCheck size={16} />}>{syncNote}</Notice>}
+      </div>
       {err && <div className="mt-4"><Notice tone="alert" title="Couldn't rebase" icon={<IconAlert size={16} />}>{err}</Notice></div>}
 
       <Section title="Flight board" action={
-        <Button size="sm" variant="secondary" loading={busy} onClick={rebase} icon={<IconPlane size={15} />}>
-          Rebase board
-        </Button>
+        <div className="flex gap-2">
+          {fidsConfigured && (
+            <Button size="sm" loading={syncing} onClick={syncFids} icon={<IconPlane size={15} />}>
+              Sync live board
+            </Button>
+          )}
+          <Button size="sm" variant="secondary" loading={busy} onClick={rebase}>
+            Rebase seeded
+          </Button>
+        </div>
       }>
         <div className="overflow-hidden rounded-[var(--radius-lg)] bg-white shadow-[var(--shadow-sm)]">
           {flights.map((f) => {

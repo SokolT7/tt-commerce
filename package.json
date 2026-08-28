@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "types": "supabase gen types typescript --local > src/lib/database.types.ts"
+    "types": "supabase gen types typescript --local > src/lib/database.types.ts",
+    "test:fids": "node --experimental-strip-types --no-warnings tests/fids.test.mts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.5",

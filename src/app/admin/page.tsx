@@ -19,5 +19,15 @@ export default async function AdminPage() {
 
   if (!admin) redirect("/admin/login?denied=1");
 
-  return <AdminDashboard name={admin.name || user.email || "Operator"} />;
+  // Only whether credentials are present — never the credentials themselves.
+  const fidsConfigured = Boolean(
+    process.env.FLIGHTSTATS_APP_ID?.trim() && process.env.FLIGHTSTATS_APP_KEY?.trim(),
+  );
+
+  return (
+    <AdminDashboard
+      name={admin.name || user.email || "Operator"}
+      fidsConfigured={fidsConfigured}
+    />
+  );
 }

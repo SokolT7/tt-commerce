@@ -11,6 +11,53 @@ fleet until the vendor supplies their interface.
 ---
 
 
+
+## Live flight data (Cirium FlightStats FIDS)
+
+Without credentials the app uses the seeded board. To pull the real one:
+
+1. Sign in at [developer.flightstats.com](https://developer.flightstats.com) and
+   open **My Applications**. Each application has its own `appId` / `appKey`.
+2. Put them in `.env.local` and restart the dev server:
+
+   ```
+   FLIGHTSTATS_APP_ID=
+   FLIGHTSTATS_APP_KEY=
+   ```
+
+3. Confirm the mapping against a real response **before** trusting it:
+
+   ```bash
+   curl -X POST 'http://localhost:3000/api/v1/fids/sync?dryRun=1' \
+     -H "Authorization: Bearer $FIDS_SYNC_SECRET" | jq
+   ```
+
+   `dryRun` maps the response and returns it without writing. Check the mapped
+   flights against `sampleRawRow`.
+
+4. Then sync for real — the **Sync live board** button on the dashboard's
+   Terminal tab, or the same call without `dryRun`.
+
+### The one assumption worth knowing
+
+FIDS publishes **departure** times, never boarding times. The acceptance engine
+works against boarding, so boarding is derived:
+
+```
+boarding_at = scheduled (or estimated) gate departure − FIDS_BOARDING_LEAD_MINUTES
+```
+
+The default is 35 minutes. That is an assumption about ZAG's boarding practice,
+not data from the feed — confirm it with the airport and adjust.
+
+Other behaviour: `estimatedGateTime` overrides `scheduledGateTime` when the
+airline has revised it; local times are resolved through `Europe/Zagreb`
+including across DST; a destination whose country is unknown is treated as EU so
+duty-free is never wrongly offered; and flights that drop off the live board are
+removed unless an order references them.
+
+Run `npm run test:fids` to exercise the mapping — 28 assertions, no network.
+
 ## Signing in
 
 | Surface | URL | Account |
