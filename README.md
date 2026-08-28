@@ -10,6 +10,41 @@ fleet until the vendor supplies their interface.
 
 ---
 
+
+## Signing in
+
+| Surface | URL | Account |
+|---|---|---|
+| Passenger app | `/order` | none — anonymous session |
+| Shop console | `/merchant/login` | `<slug>@shop.local` / `gatedelivery` |
+| Operations | `/admin/login` | `admin@gatedelivery.local` / `gatedelivery` |
+
+Shop slugs are `needstop`, `gatecafe`, `aelia`, `apron`, `pub`, `cafenero`,
+`tisak`, `cakes`.
+
+Create the accounts with:
+
+```bash
+node scripts/seed-staff.mjs   # one login per shop
+node scripts/seed-admin.mjs   # the platform administrator
+```
+
+> These are development helpers with a fixed password. In production an
+> administrator is created deliberately, and `platform_admins` is the only
+> table that grants estate-wide access.
+
+### What the operations dashboard covers
+
+**Overview** — orders today, platform revenue split into commission and fees,
+shop sales, late deliveries, units available, incidents, items off sale.
+**Orders** — every order across all shops, filterable by in-progress or late.
+**Shops** — open/close any outlet, edit commission and prep time, jump into any
+shop console. **Operations** — fleet, battery, compartments, assigned
+deliveries, incident log. **Terminal** — seats, flight board and rebasing.
+
+Fleet control is read-only until the vendor interface exists; everything above
+the fleet layer is live.
+
 ## Running it
 
 Requires Docker (for local Supabase) and Node 20+.

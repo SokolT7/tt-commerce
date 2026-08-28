@@ -795,6 +795,24 @@ export type Database = {
           },
         ]
       }
+      platform_admins: {
+        Row: {
+          created_at: string
+          name: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          name?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          name?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       product_categories: {
         Row: {
           id: string
@@ -1349,8 +1367,27 @@ export type Database = {
       }
     }
     Functions: {
+      admin_overview: { Args: never; Returns: Json }
+      admin_shop_stats: {
+        Args: never
+        Returns: {
+          colour: string
+          commission_cents_today: number
+          commission_rate: number
+          completed_today: number
+          gross_cents_today: number
+          live_orders: number
+          merchant_id: string
+          name: string
+          open: boolean
+          prep_minutes: number
+          products: number
+          slug: string
+        }[]
+      }
       create_order: { Args: { payload: Json }; Returns: string }
       is_merchant_staff: { Args: { p_merchant: string }; Returns: boolean }
+      is_platform_admin: { Args: never; Returns: boolean }
       my_merchant_ids: { Args: never; Returns: string[] }
       nearest_waypoint: {
         Args: {
@@ -1363,6 +1400,7 @@ export type Database = {
           waypoint_id: string
         }[]
       }
+      rebase_flight_board: { Args: { lead_minutes?: number }; Returns: number }
       resolve_delivery_location: {
         Args: {
           p_kind: Database["public"]["Enums"]["delivery_location_kind"]
