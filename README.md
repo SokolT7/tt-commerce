@@ -115,6 +115,25 @@ rejected, so a deadline can never be lost silently.
 Restoring it is a UI change plus passing `flightId` again; the server already
 accepts it.
 
+
+### Testing without robots
+
+`FLEET_ADAPTER=simulated` (the default) completes the legs a robot would
+drive, instantly:
+
+| Shop action | What happens |
+|---|---|
+| Mark ready | A unit is assigned and is already at the counter |
+| Load compartment | The unit is already at the passenger, code shown |
+
+Order states, compartments and missions are all real — only the travel is
+skipped, so the whole loop is testable end to end:
+
+**Accept → Mark ready → Load compartment → passenger enters the code → done.**
+
+Set `FLEET_ADAPTER=vendor` once the robot interface exists, so the simulation
+cannot quietly stay on underneath real hardware.
+
 ## Signing in
 
 | Surface | URL | Account |

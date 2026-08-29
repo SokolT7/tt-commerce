@@ -10,6 +10,24 @@ import { loadMerchants } from "./data";
  * trigger so no path can forget to record history.
  */
 
+/**
+ * No fleet is connected yet, so the legs a robot would drive have nobody to
+ * perform them: an order would sit at ROBOT_ASSIGNED forever because nothing
+ * marks the unit as having reached the shop, and again at IN_TRANSIT because
+ * nothing marks it as arrived.
+ *
+ * While simulated, those legs complete instantly — marking an order ready puts
+ * a unit at the counter, and loading it puts the unit at the passenger. The
+ * order states, compartments and missions are all real; only the travel is
+ * skipped.
+ *
+ * Set FLEET_ADAPTER=vendor once the robot interface exists and these become
+ * no-ops, so the simulation cannot quietly stay on underneath real hardware.
+ */
+export function fleetIsSimulated(): boolean {
+  return (process.env.FLEET_ADAPTER ?? "simulated").toLowerCase() !== "vendor";
+}
+
 async function currentState(orderId: string): Promise<OrderState> {
   const db = createAdminClient();
   const { data, error } = await db.from("orders").select("state").eq("id", orderId).single();
@@ -104,6 +122,16 @@ export async function dispatch(orderId: string) {
   await move(orderId, "ROBOT_ASSIGNED", {
     mission_id: mission.id, robot_id: robot.id, compartment_id: compartment.id,
   });
+
+  if (fleetIsSimulated()) {
+    // Skip the drive to the counter, so the shop can load straight away.
+    await db.from("robots")
+      .update({ status: "loading", waypoint_id: merchant.waypointId })
+      .eq("id", robot.id);
+    await db.from("mission_stops")
+      .update({ done: true }).eq("mission_id", mission.id).eq("seq", 1);
+    await move(orderId, "AT_MERCHANT");
+  }
 }
 
 /** The shop loads the compartment and seals it. */
@@ -120,6 +148,20 @@ export async function loadCompartment(orderId: string) {
   await move(orderId, "LOADED");
   await move(orderId, "IN_TRANSIT");
   await db.from("robots").update({ status: "in_transit" }).eq("id", order.robot_id);
+
+  if (fleetIsSimulated()) {
+    // Skip the drive to the passenger, so the handover code appears at once.
+    const { data: o } = await db
+      .from("orders").select("nav_waypoint_id, mission_id").eq("id", orderId).single();
+    await db.from("robots")
+      .update({ status: "awaiting_handover", waypoint_id: o?.nav_waypoint_id ?? null })
+      .eq("id", order.robot_id);
+    if (o?.mission_id) {
+      await db.from("mission_stops")
+        .update({ done: true }).eq("mission_id", o.mission_id).eq("seq", 2);
+    }
+    await move(orderId, "ARRIVED");
+  }
 }
 
 export async function verifyHandover(orderId: string, code: string) {
