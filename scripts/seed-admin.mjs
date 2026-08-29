@@ -24,6 +24,18 @@ const EMAIL = process.env.ADMIN_EMAIL ?? "admin@gatedelivery.local";
 const PASSWORD = process.env.ADMIN_PASSWORD ?? "gatedelivery";
 const NAME = process.env.ADMIN_NAME ?? "Platform operator";
 
+const supaUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL;
+const host = new URL(supaUrl).host;
+const isLocal = /localhost|127\.0\.0\.1/.test(host);
+console.log(`target project : ${host}${isLocal ? "  (local)" : "  (HOSTED)"}`);
+
+if (!isLocal && PASSWORD === "gatedelivery") {
+  console.error("\nRefusing to create a hosted administrator with the default password.");
+  console.error("It is published in this repository. Set one explicitly:\n");
+  console.error("  ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='<strong>' node scripts/seed-admin.mjs\n");
+  process.exit(1);
+}
+
 let userId;
 const { data: created, error } = await db.auth.admin.createUser({
   email: EMAIL, password: PASSWORD, email_confirm: true,

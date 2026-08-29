@@ -141,6 +141,20 @@ node scripts/seed-staff.mjs   # one login per shop
 node scripts/seed-admin.mjs   # the platform administrator
 ```
 
+Auth accounts live in Supabase Auth, not in your tables, so **running the SQL
+does not create them**. A hosted project needs these run against it separately:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co \
+SUPABASE_SERVICE_ROLE_KEY=<cloud service role key> \
+SHOP_PASSWORD='<something strong>' \
+node scripts/seed-staff.mjs
+```
+
+Both scripts print which project they are about to write to, and refuse to
+create hosted accounts with the default password — it is published here, so
+every shop would share a password anyone can read.
+
 > These are development helpers with a fixed password. In production an
 > administrator is created deliberately, and `platform_admins` is the only
 > table that grants estate-wide access.

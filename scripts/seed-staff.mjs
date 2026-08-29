@@ -1,9 +1,16 @@
 /**
- * Creates shop staff logins for local development.
+ * Creates one shop staff login per merchant.
  *
- * Run: node scripts/seed-staff.mjs
- * Every account uses the same password; this is a development helper and must
- * never be run against production.
+ *   node scripts/seed-staff.mjs
+ *
+ * Environment variables override .env.local, so this can target a hosted
+ * project. It prints which project it is about to write to, because seeding
+ * the wrong one is silent and annoying to undo.
+ *
+ * The default password is a development convenience. Anything reachable from
+ * the internet must be given a real one:
+ *
+ *   SHOP_PASSWORD='...' node scripts/seed-staff.mjs
  */
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync } from "node:fs";
@@ -19,7 +26,21 @@ const db = createClient(
   { auth: { persistSession: false } },
 );
 
-const PASSWORD = "gatedelivery";
+const PASSWORD = process.env.SHOP_PASSWORD ?? "gatedelivery";
+const host = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).host;
+const isLocal = /localhost|127\.0\.0\.1/.test(host);
+
+console.log(`target project : ${host}${isLocal ? "  (local)" : "  (HOSTED)"}`);
+console.log(`password       : ${PASSWORD === "gatedelivery" ? "gatedelivery  (default)" : "custom"}`);
+
+if (!isLocal && PASSWORD === "gatedelivery") {
+  console.error("\nRefusing to seed a hosted project with the default password.");
+  console.error("It is published in this repository, so every shop would share a");
+  console.error("password anyone can read. Set one explicitly:\n");
+  console.error("  SHOP_PASSWORD='<something strong>' node scripts/seed-staff.mjs\n");
+  process.exit(1);
+}
+
 const { data: merchants, error } = await db.from("merchants").select("id, slug, name");
 if (error) throw error;
 
