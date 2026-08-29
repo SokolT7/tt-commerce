@@ -123,8 +123,16 @@ accepts it.
 | Shop console | `/merchant/login` | `<slug>@shop.local` / `gatedelivery` |
 | Operations | `/admin/login` | `admin@gatedelivery.local` / `gatedelivery` |
 
-Shop slugs are `needstop`, `gatecafe`, `aelia`, `apron`, `pub`, `cafenero`,
-`tisak`, `cakes`.
+To see which login belongs to which shop, and the exact link to send each
+owner:
+
+```bash
+npm run shops
+```
+
+It reads whichever Supabase project `.env.local` points at, so it stays
+accurate for the hosted project too. Passwords are hashed and cannot be
+listed — reset one in the Supabase dashboard under **Authentication → Users**.
 
 Create the accounts with:
 
