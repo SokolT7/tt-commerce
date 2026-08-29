@@ -60,7 +60,12 @@ const body = await res.text();
 
 if (!res.ok) {
   console.error(`HTTP ${res.status}`);
-  if (res.status === 401 || res.status === 403) {
+  if (/not active|inactive|pending/i.test(body)) {
+    console.error("\nThe application is not active yet.");
+    console.error("New applications are approved manually by Cirium — you get an email.");
+    console.error("Check its State on developer.flightstats.com -> Applications.");
+    console.error("Nothing is wrong with the key or the request.");
+  } else if (res.status === 401 || res.status === 403) {
     console.error("\nThat is an authorisation failure. Usually one of:");
     console.error("  • the app id or key is wrong, or they belong to different applications");
     console.error("  • the FIDS API is not enabled for this application");

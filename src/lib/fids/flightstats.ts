@@ -184,6 +184,18 @@ export async function fetchDepartures(cfg: FidsConfig): Promise<FetchResult> {
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     // Never echo the URL back — it carries appId and appKey.
+
+    // A newly created application sits in "pending" until Cirium approves it,
+    // and the API reports that as 403 "application is not active" — otherwise
+    // indistinguishable from a bad key, which sends people to debug a
+    // credential that is perfectly fine.
+    if (/not active|inactive|pending/i.test(body)) {
+      throw new Error(
+        "The FlightStats application is not active yet. New applications are " +
+        "approved manually by Cirium — check its State on developer.flightstats.com. " +
+        "The credentials themselves are fine.",
+      );
+    }
     throw new Error(
       res.status === 401 || res.status === 403
         ? "FlightStats rejected the credentials. Check FLIGHTSTATS_APP_ID and FLIGHTSTATS_APP_KEY."
