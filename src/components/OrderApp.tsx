@@ -42,6 +42,7 @@ interface Quote {
 interface OrderRow {
   id: string; ref: string; state: OrderState; total_cents: number; delivery_fee_cents: number;
   handover_code: string; nav_waypoint_name: string; nav_waypoint_landmark: string;
+  rejection_reason: string | null; refunded_cents: number | null;
   location_note: string; walk_metres: number; robot_id: string | null;
   merchant_name: string; flight_number: string | null; flight_gate: string | null;
   sla_missed: boolean; created_at: string;
@@ -1165,6 +1166,16 @@ function Tracking({ order, cat, onBack, onShopAgain }: {
         <div className="mt-4">
           <Notice tone="alert" title="We were late" icon={<IconClock size={16} />}>
             Your delivery fee has been refunded automatically.
+          </Notice>
+        </div>
+      )}
+
+      {["ABORTED", "REJECTED"].includes(order.state) && (
+        <div className="mt-4">
+          <Notice tone="alert" icon={<IconAlert size={16} />}
+            title={order.state === "REJECTED" ? "The shop couldn't take this order" : "The shop cancelled this order"}>
+            {order.rejection_reason || "No reason was given."}
+            {order.refunded_cents ? ` You have been refunded ${euros(order.refunded_cents)} in full.` : ""}
           </Notice>
         </div>
       )}

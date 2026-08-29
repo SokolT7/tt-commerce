@@ -6,7 +6,7 @@ import { api, supabase, useLiveQuery, useNow, type DB } from "@/lib/hooks";
 import { euros, mmss } from "@/lib/format";
 import { STATE_COPY } from "@/domain/orders/machine";
 import {
-  Button, Pill, Monogram, EmptyState, SkeletonList,
+  Button, Pill, Monogram, EmptyState, SkeletonList, Notice,
   IconOrders, IconStore, IconClock, IconCheck, IconAlert, IconRobot, IconLock, IconPin,
 } from "@/components/ui";
 
@@ -197,9 +197,17 @@ function Orders({ orders, now, onDone }: { orders: OrderRow[]; now: number; onDo
   );
 }
 
+const CANCEL_REASONS = [
+  "Item ran out",
+  "Equipment problem",
+  "Too busy to make it in time",
+  "Order placed by mistake",
+];
+
 function OrderCard({ order, now, onDone }: { order: OrderRow; now: number; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const deadlineIn = order.promise_deadline
     ? Math.round((new Date(order.promise_deadline).getTime() - now) / 1000) : null;
   const urgent = deadlineIn !== null && deadlineIn < 300;   // includes overdue
@@ -308,8 +316,77 @@ function OrderCard({ order, now, onDone }: { order: OrderRow; now: number; onDon
             {STATE_COPY[order.state as keyof typeof STATE_COPY]?.label ?? order.state}
           </div>
         )}
+
+        {/* Rejecting is offered on a new order; after that the way out is to
+            cancel, which also refunds and frees the unit. */}
+        {order.state !== "SENT_TO_MERCHANT" && (
+          <button onClick={() => setCancelling(true)} disabled={busy}
+            className="pressable-sm mt-2 w-full rounded-[10px] py-2 text-[13px] font-medium text-[var(--color-muted)] hover:bg-[var(--color-alert-soft)] hover:text-[var(--color-alert)] disabled:opacity-50">
+            Cancel this order
+          </button>
+        )}
       </div>
+      {cancelling && (
+        <CancelDialog
+          order={order}
+          onClose={() => setCancelling(false)}
+          onConfirm={async (reason) => { await act("cancel", reason); setCancelling(false); }}
+        />
+      )}
     </article>
+  );
+}
+
+function CancelDialog({ order, onClose, onConfirm }: {
+  order: OrderRow; onClose: () => void; onConfirm: (reason: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const inFlight = ["LOADED", "IN_TRANSIT", "ARRIVED"].includes(order.state);
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center p-5">
+      <button aria-label="Keep order" onClick={onClose}
+        className="fade-in absolute inset-0 bg-[rgba(16,20,19,0.42)] backdrop-blur-[2px]" />
+      <div className="pop relative w-full max-w-sm rounded-[var(--radius-xl)] bg-white p-6 shadow-[var(--shadow-lg)]">
+        <h2 className="headline text-[19px] font-semibold">Cancel {order.ref}?</h2>
+        <p className="mt-1.5 text-[14px] leading-relaxed text-[var(--color-ink-2)]">
+          The passenger is refunded in full and told why. This cannot be undone.
+        </p>
+
+        {inFlight && (
+          <div className="mt-3">
+            <Notice tone="alert" title="The order is already loaded" icon={<IconAlert size={16} />}>
+              It is in a compartment on {order.robot_id ?? "a unit"} and will need retrieving.
+            </Notice>
+          </div>
+        )}
+
+        <p className="label mt-4">Reason — the passenger sees this</p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {CANCEL_REASONS.map((r) => (
+            <button key={r} onClick={() => setReason(r)}
+              className="pressable-sm rounded-full px-3 py-1.5 text-[12.5px] font-medium transition-colors"
+              style={reason === r
+                ? { background: "var(--color-ink)", color: "white" }
+                : { background: "var(--color-surface-2)", color: "var(--color-ink-2)" }}>
+              {r}
+            </button>
+          ))}
+        </div>
+        <input value={reason} onChange={(e) => setReason(e.target.value)}
+          placeholder="Or type a reason"
+          className="mt-2.5 w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-white px-3.5 py-2.5 text-[14px] outline-none focus:border-[var(--color-accent)]" />
+
+        <div className="mt-5 grid grid-cols-2 gap-2.5">
+          <Button variant="secondary" onClick={onClose}>Keep order</Button>
+          <Button variant="danger" loading={busy} disabled={!reason.trim()}
+            onClick={async () => { setBusy(true); try { await onConfirm(reason.trim()); } finally { setBusy(false); } }}>
+            Cancel order
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 

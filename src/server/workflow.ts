@@ -164,6 +164,64 @@ export async function loadCompartment(orderId: string) {
   }
 }
 
+/**
+ * A shop cancelling an order it has already accepted — ran out of something,
+ * the machine broke, the kitchen is swamped.
+ *
+ * Distinct from rejectOrder, which declines an order before any work starts.
+ * This one has to undo whatever has already happened: release the compartment,
+ * free the unit, close the mission, and refund in full including the delivery
+ * fee, since the passenger is not at fault.
+ */
+export async function cancelOrder(orderId: string, reason: string) {
+  const db = createAdminClient();
+  const { data: order } = await db
+    .from("orders")
+    .select("state, ref, robot_id, compartment_id, mission_id, total_cents")
+    .eq("id", orderId).single();
+  if (!order) throw new Error("Unknown order");
+
+  // Once the passenger has it, there is nothing left to cancel.
+  if (["HANDED_OVER", "COMPLETED"].includes(order.state)) {
+    throw new Error("This order has already been handed over");
+  }
+  if (["REJECTED", "CANCELLED", "ABORTED"].includes(order.state)) {
+    throw new Error("This order is already closed");
+  }
+
+  await move(orderId, "ABORTED", {
+    rejection_reason: reason,
+    refunded_cents: order.total_cents ?? 0,
+  });
+
+  // Whatever the unit was carrying is no longer wanted. Freeing the bay
+  // matters more than tidiness: a compartment left marked occupied silently
+  // removes capacity from the fleet.
+  if (order.robot_id && order.compartment_id) {
+    await db.from("robot_compartments")
+      .update({ occupied: false, locked: true, order_id: null })
+      .eq("robot_id", order.robot_id).eq("id", order.compartment_id);
+    await db.from("robots").update({ status: "returning" }).eq("id", order.robot_id);
+  }
+  if (order.mission_id) {
+    await db.from("missions")
+      .update({ status: "cancelled", finished_at: new Date().toISOString() })
+      .eq("id", order.mission_id);
+  }
+
+  await db.from("payments")
+    .update({ status: "refunded", refunded_at: new Date().toISOString() })
+    .eq("order_id", orderId);
+
+  const inFlight = ["LOADED", "IN_TRANSIT", "ARRIVED", "NO_SHOW"].includes(order.state);
+  await incident(
+    inFlight ? "critical" : "warn",
+    `${order.ref} cancelled by the shop after ${order.state} — ${reason}` +
+      (inFlight ? ". Goods are in a compartment and need retrieving." : ""),
+    orderId,
+  );
+}
+
 export async function verifyHandover(orderId: string, code: string) {
   const db = createAdminClient();
   const { data: order } = await db

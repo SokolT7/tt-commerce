@@ -2,12 +2,12 @@ import { createServerSupabase } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   acceptOrder, rejectOrder, markReady, loadCompartment,
-  verifyHandover, completeHandover, assertStaffOwns,
+  verifyHandover, completeHandover, cancelOrder, assertStaffOwns,
 } from "@/server/workflow";
 
 export const dynamic = "force-dynamic";
 
-const STAFF_ACTIONS = ["accept", "reject", "ready", "load"];
+const STAFF_ACTIONS = ["accept", "reject", "ready", "load", "cancel"];
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
@@ -26,6 +26,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       case "reject": await rejectOrder(id, reason || "Item unavailable"); break;
       case "ready":  await markReady(id); break;
       case "load":   await loadCompartment(id); break;
+      case "cancel": {
+        const why = (reason ?? "").trim();
+        // The passenger is told this verbatim, so it cannot be blank.
+        if (!why) return Response.json({ error: "Give a reason for cancelling" }, { status: 400 });
+        await cancelOrder(id, why);
+        break;
+      }
       case "handover": {
         const r = await verifyHandover(id, code ?? "");
         if (!r.ok) return Response.json({ error: r.reason }, { status: 400 });
