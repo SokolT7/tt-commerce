@@ -14,15 +14,23 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params;
   const db = createAdminClient();
 
+  // Matched case-insensitively: this id is typed into a tablet's address bar,
+  // and iOS in particular will hand it over lowercased. Requiring exact case
+  // turns a working screen into "Unknown unit" for no reason.
   const { data: robot } = await db
     .from("robots").select("id, name, status, battery_pct, zone")
-    .eq("id", id).maybeSingle();
-  if (!robot) return Response.json({ error: "Unknown unit" }, { status: 404 });
+    .ilike("id", id).maybeSingle();
+  if (!robot) {
+    return Response.json(
+      { error: "Unknown unit", hint: "Check the unit id in the operations dashboard." },
+      { status: 404 },
+    );
+  }
 
   const { data: order } = await db
     .from("orders")
     .select("id, ref, state, compartment_id, handover_locked_at, nav_waypoint_id")
-    .eq("robot_id", id).in("state", ["ARRIVED", "NO_SHOW"])
+    .eq("robot_id", robot.id).in("state", ["ARRIVED", "NO_SHOW"])
     .order("created_at", { ascending: true }).limit(1).maybeSingle();
 
   let job = null;
