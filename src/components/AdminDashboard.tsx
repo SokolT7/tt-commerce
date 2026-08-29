@@ -502,6 +502,11 @@ function OpsTab({ robots, compartments, incidents, waypoints, edges, orders }: {
                 <p className="mt-2 text-[12.5px] text-[var(--color-muted)]">
                   {r.zone} · at {r.waypoint_id ?? "unknown"}
                 </p>
+                <a href={`/robot/${r.id}`} target="_blank" rel="noreferrer"
+                  className="pressable-sm mt-3 block rounded-[10px] py-2 text-center text-[12.5px] font-medium"
+                  style={{ background: "var(--color-night-3)", color: "var(--color-night-ink)" }}>
+                  Open this unit&rsquo;s screen
+                </a>
                 {bays.length > 0 && (
                   <div className="mt-3 flex gap-1">
                     {bays.map((c) => (

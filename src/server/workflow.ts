@@ -222,17 +222,47 @@ export async function cancelOrder(orderId: string, reason: string) {
   );
 }
 
+/** Wrong codes tolerated before the compartment locks out. */
+const MAX_HANDOVER_ATTEMPTS = 5;
+
 export async function verifyHandover(orderId: string, code: string) {
   const db = createAdminClient();
   const { data: order } = await db
-    .from("orders").select("handover_code, state, robot_id, compartment_id").eq("id", orderId).single();
+    .from("orders")
+    .select("handover_code, state, robot_id, compartment_id, handover_attempts, handover_locked_at, ref")
+    .eq("id", orderId).single();
   if (!order) throw new Error("Unknown order");
   if (!["ARRIVED", "NO_SHOW"].includes(order.state)) {
     return { ok: false as const, reason: "This order is not waiting for handover" };
   }
-  if (code.trim() !== order.handover_code) {
-    return { ok: false as const, reason: "That code doesn't match" };
+  if (order.handover_locked_at) {
+    return { ok: false as const, reason: "Too many wrong codes. Ask a member of staff for help." };
   }
+
+  if (code.trim() !== order.handover_code) {
+    // The kiosk has no login, so the code is the only credential. Unlimited
+    // guesses would make four digits meaningless.
+    const attempts = (order.handover_attempts ?? 0) + 1;
+    const locked = attempts >= MAX_HANDOVER_ATTEMPTS;
+    await db.from("orders").update({
+      handover_attempts: attempts,
+      ...(locked ? { handover_locked_at: new Date().toISOString() } : {}),
+    }).eq("id", orderId);
+
+    if (locked) {
+      await incident("warn",
+        `${order.ref} handover locked after ${attempts} wrong codes at ${order.robot_id ?? "a unit"}`,
+        orderId);
+      return { ok: false as const, reason: "Too many wrong codes. Ask a member of staff for help." };
+    }
+    const left = MAX_HANDOVER_ATTEMPTS - attempts;
+    return {
+      ok: false as const,
+      reason: `That code doesn't match. ${left} ${left === 1 ? "try" : "tries"} left.`,
+    };
+  }
+
+  await db.from("orders").update({ handover_attempts: 0 }).eq("id", orderId);
   if (order.robot_id && order.compartment_id) {
     await db.from("robot_compartments").update({ locked: false })
       .eq("robot_id", order.robot_id).eq("id", order.compartment_id);

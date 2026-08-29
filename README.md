@@ -337,4 +337,18 @@ Each is behind an environment variable, so a missing key degrades one
 capability rather than breaking the build.
 
 > The gate layout and walking distances are a reconstruction pending a survey
-> with the airport. Shop names are the real operators.
+> with the airport. Shop names are the real operators.\n
+### The unit's screen
+
+Each robot has a kiosk screen at `/robot/<unit-id>` — `/robot/SB-01`,
+`/robot/SB-02`. Open it once on the tablet mounted to that unit; it is not
+linked from anywhere else, and the operations dashboard has a link to each.
+
+It shows a sponsor loop while idle and the handover pad when an order for that
+unit arrives. The passenger types the four-digit code from their phone, the
+compartment opens, and they confirm they have taken it.
+
+The pad is unauthenticated by necessity — a kiosk has nobody to log in — so
+**the code is the only credential**. Wrong codes are counted and the
+compartment locks after five, needing staff to release it. The endpoint never
+returns the code, the passenger's name, or anything about other orders.

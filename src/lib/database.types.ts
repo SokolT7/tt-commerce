@@ -605,7 +605,9 @@ export type Database = {
           delivery_fee_cents: number
           flight_id: string | null
           goods_cents: number
+          handover_attempts: number
           handover_code: string
+          handover_locked_at: string | null
           id: string
           location_kind: Database["public"]["Enums"]["delivery_location_kind"]
           location_note: string
@@ -638,7 +640,9 @@ export type Database = {
           delivery_fee_cents?: number
           flight_id?: string | null
           goods_cents?: number
+          handover_attempts?: number
           handover_code?: string
+          handover_locked_at?: string | null
           id?: string
           location_kind?: Database["public"]["Enums"]["delivery_location_kind"]
           location_note?: string
@@ -671,7 +675,9 @@ export type Database = {
           delivery_fee_cents?: number
           flight_id?: string | null
           goods_cents?: number
+          handover_attempts?: number
           handover_code?: string
+          handover_locked_at?: string | null
           id?: string
           location_kind?: Database["public"]["Enums"]["delivery_location_kind"]
           location_note?: string
