@@ -8,7 +8,7 @@ import { TerminalMap } from "@/components/TerminalMap";
 import { THEMES, themeFor, tint } from "@/lib/categories";
 import {
   Button, Card, Monogram, Pill, Notice, Sheet, SkeletonList, Stagger, EmptyState,
-  CATEGORY_ICONS, IconArrowRight,
+  CATEGORY_ICONS, IconArrowRight, Modal,
   IconBag, IconOrders, IconPin, IconSeat, IconClock, IconCheck, IconArrowLeft,
   IconPlus, IconMinus, IconStore, IconLock, IconAlert, IconRobot,
 } from "@/components/ui";
@@ -290,18 +290,13 @@ export function OrderApp({ seatToken }: { seatToken?: string }) {
       )}
 
       {confirm && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center p-4">
-          <button aria-label="Cancel" onClick={() => setConfirm(null)}
-            className="fade-in absolute inset-0 bg-[rgba(16,20,19,0.42)] backdrop-blur-[2px]" />
-          <div className="sheet-up relative w-full max-w-md rounded-[var(--radius-2xl)] bg-white p-6 shadow-[var(--shadow-lg)]">
-            <h2 className="headline text-[19px] font-semibold">{confirm.title}</h2>
-            <p className="prose-balance mt-2 text-[14.5px] leading-relaxed text-[var(--color-ink-2)]">{confirm.body}</p>
-            <div className="mt-6 grid grid-cols-2 gap-2.5">
+        <Modal title={confirm.title} description={confirm.body} onClose={() => setConfirm(null)}
+          footer={
+            <div className="grid grid-cols-2 gap-2.5">
               <Button variant="secondary" onClick={() => setConfirm(null)}>Keep as is</Button>
               <Button variant="danger" onClick={confirm.run}>{confirm.label}</Button>
             </div>
-          </div>
-        </div>
+          } />
       )}
 
       {cartCount > 0 && !["tracking", "orders"].includes(step) && (
@@ -656,27 +651,20 @@ function ProductRow({ product: p, cat, cart, setCart }: {
       )}
 
       {switching && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center p-4">
-          <button aria-label="Cancel" onClick={() => setSwitching(false)}
-            className="fade-in absolute inset-0 bg-[rgba(16,20,19,0.42)] backdrop-blur-[2px]" />
-          <div className="sheet-up relative w-full max-w-md rounded-[var(--radius-2xl)] bg-white p-6 shadow-[var(--shadow-lg)]">
-            <h2 className="headline text-[19px] font-semibold">Start a new basket?</h2>
-            <p className="prose-balance mt-2 text-[14.5px] leading-relaxed text-[var(--color-ink-2)]">
-              Your basket has items from {basketShopName}. Each order is prepared by one shop, so
-              adding this will clear what you have.
-            </p>
-            <div className="mt-6 grid grid-cols-2 gap-2.5">
+        <Modal
+          title="Start a new basket?"
+          onClose={() => setSwitching(false)}
+          description={`Your basket has items from ${basketShopName}. Each order is prepared by one shop, so adding this will clear what you have.`}
+          footer={
+            <div className="grid grid-cols-2 gap-2.5">
               <Button variant="secondary" onClick={() => setSwitching(false)}>Keep basket</Button>
               <Button onClick={() => {
-                setCart({});
                 setSwitching(false);
-                // Options still need choosing if this product has any.
-                if (groups.length > 0) setConfiguring(true);
+                if (groups.length > 0) { setCart({}); setConfiguring(true); }
                 else setCart({ [p.id]: { qty: 1, optionIds: [] } });
               }}>Start new</Button>
             </div>
-          </div>
-        </div>
+          } />
       )}
     </>
   );

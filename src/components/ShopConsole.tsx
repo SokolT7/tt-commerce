@@ -6,7 +6,7 @@ import { api, supabase, useLiveQuery, useNow, type DB } from "@/lib/hooks";
 import { euros, mmss } from "@/lib/format";
 import { STATE_COPY } from "@/domain/orders/machine";
 import {
-  Button, Pill, Monogram, EmptyState, SkeletonList, Notice,
+  Button, Pill, Monogram, EmptyState, SkeletonList, Notice, Modal,
   IconOrders, IconStore, IconClock, IconCheck, IconAlert, IconRobot, IconLock, IconPin,
 } from "@/components/ui";
 
@@ -345,52 +345,48 @@ function CancelDialog({ order, onClose, onConfirm }: {
   const inFlight = ["LOADED", "IN_TRANSIT", "ARRIVED"].includes(order.state);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center p-5">
-      <button aria-label="Keep order" onClick={onClose}
-        className="fade-in absolute inset-0 bg-[rgba(16,20,19,0.42)] backdrop-blur-[2px]" />
-      <div className="pop relative w-full max-w-sm rounded-[var(--radius-xl)] bg-white p-6 shadow-[var(--shadow-lg)]">
-        <h2 className="headline text-[19px] font-semibold">Cancel {order.ref}?</h2>
-        <p className="mt-1.5 text-[14px] leading-relaxed text-[var(--color-ink-2)]">
-          The passenger is refunded in full and told why. This cannot be undone.
-        </p>
-
-        {inFlight && (
-          <div className="mt-3">
-            <Notice tone="alert" title="The order is already loaded" icon={<IconAlert size={16} />}>
-              It is in a compartment on {order.robot_id ?? "a unit"} and will need retrieving.
-            </Notice>
-          </div>
-        )}
-
-        <p className="label mt-4">Reason — the passenger sees this</p>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {CANCEL_REASONS.map((r) => (
-            <button key={r} onClick={() => setReason(r)}
-              className="pressable-sm rounded-full px-3 py-1.5 text-[12.5px] font-medium transition-colors"
-              style={reason === r
-                ? { background: "var(--color-ink)", color: "white" }
-                : { background: "var(--color-surface-2)", color: "var(--color-ink-2)" }}>
-              {r}
-            </button>
-          ))}
-        </div>
-        <input value={reason} onChange={(e) => setReason(e.target.value)}
-          placeholder="Or type a reason"
-          className="mt-2.5 w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-white px-3.5 py-2.5 text-[14px] outline-none focus:border-[var(--color-accent)]" />
-
-        <div className="mt-5 grid grid-cols-2 gap-2.5">
+    <Modal
+      title={`Cancel ${order.ref}?`}
+      tone="danger"
+      onClose={onClose}
+      description="The passenger is refunded in full and told why. This cannot be undone."
+      footer={
+        <div className="grid grid-cols-2 gap-2.5">
           <Button variant="secondary" onClick={onClose}>Keep order</Button>
           <Button variant="danger" loading={busy} disabled={!reason.trim()}
             onClick={async () => { setBusy(true); try { await onConfirm(reason.trim()); } finally { setBusy(false); } }}>
             Cancel order
           </Button>
         </div>
+      }
+    >
+      {inFlight && (
+        <div className="mb-4">
+          <Notice tone="alert" title="The order is already loaded" icon={<IconAlert size={16} />}>
+            It is in a compartment on {order.robot_id ?? "a unit"} and will need retrieving.
+          </Notice>
+        </div>
+      )}
+
+      <p className="label">Reason — the passenger sees this</p>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {CANCEL_REASONS.map((r) => (
+          <button key={r} onClick={() => setReason(r)}
+            className="pressable-sm rounded-full px-3 py-1.5 text-[12.5px] font-medium transition-colors"
+            style={reason === r
+              ? { background: "var(--color-ink)", color: "white" }
+              : { background: "var(--color-surface-2)", color: "var(--color-ink-2)" }}>
+            {r}
+          </button>
+        ))}
       </div>
-    </div>
+      <input value={reason} onChange={(e) => setReason(e.target.value)}
+        placeholder="Or type a reason"
+        className="mt-2.5 w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-white px-3.5 py-2.5 text-[14px] outline-none focus:border-[var(--color-accent)]" />
+    </Modal>
   );
 }
 
-/* --------------------------------- menu --------------------------------- */
 
 const BLANK: Omit<Product, "id"> & { id: string } = {
   id: "", category_id: null, name: "", description: "", price_cents: 0,

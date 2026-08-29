@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import type { ReactNode, ButtonHTMLAttributes } from "react";
 
 /* ==========================================================================
@@ -179,13 +181,83 @@ export function Notice({
   );
 }
 
+/**
+ * Renders into document.body.
+ *
+ * A dialog is position: fixed, which sounds like it escapes everything — but
+ * an ancestor with a transform, filter or animation becomes the containing
+ * block for fixed descendants, and any overflow: hidden on that ancestor then
+ * clips the dialog. Our cards have both: an entry animation and rounded
+ * overflow. Portalling is the only reliable fix.
+ */
+const emptySubscribe = () => () => {};
+
+function Portal({ children }: { children: ReactNode }) {
+  // "Are we on the client yet" is a question about an external system, not
+  // state to be set in an effect: false while server-rendering, true after
+  // hydration, and it never changes again.
+  const onClient = useSyncExternalStore(emptySubscribe, () => true, () => false);
+  if (!onClient) return null;
+  return createPortal(children, document.body);
+}
+
+/** Escape to dismiss, and the page behind must not scroll under the dialog. */
+function useDismiss(onClose: () => void) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+}
+
+/**
+ * Centred dialog. Caps its own height and scrolls inside, so a tall one is
+ * never cut off on a short screen — the confirm buttons must always be
+ * reachable.
+ */
+export function Modal({
+  children, onClose, title, description, footer, tone = "default",
+}: {
+  children?: ReactNode; onClose: () => void; title: string;
+  description?: ReactNode; footer?: ReactNode; tone?: "default" | "danger";
+}) {
+  useDismiss(onClose);
+  return (
+    <Portal>
+      <div className="fixed inset-0 z-[100] grid place-items-center p-4 sm:p-6">
+        <button aria-label="Close" onClick={onClose}
+          className="fade-in absolute inset-0 bg-[rgba(16,20,19,0.45)] backdrop-blur-[2px]" />
+        <div role="dialog" aria-modal="true" aria-label={title}
+          className="pop relative flex max-h-[calc(100dvh-2rem)] w-full max-w-sm flex-col overflow-hidden rounded-[var(--radius-xl)] bg-white shadow-[var(--shadow-lg)]">
+          <div className="px-6 pt-6">
+            <h2 className="headline text-[19px] font-semibold"
+              style={tone === "danger" ? { color: "var(--color-alert)" } : undefined}>{title}</h2>
+            {description && (
+              <div className="mt-1.5 text-[14px] leading-relaxed text-[var(--color-ink-2)]">{description}</div>
+            )}
+          </div>
+          {children && <div className="no-bar flex-1 overflow-y-auto px-6 pt-4">{children}</div>}
+          {footer && <div className="px-6 pb-6 pt-5">{footer}</div>}
+        </div>
+      </div>
+    </Portal>
+  );
+}
+
 /* Bottom sheet — enters from the edge it will leave by, so a downward swipe
    to dismiss feels like the obvious gesture even before it is supported. */
 export function Sheet({
   children, onClose, title, footer,
 }: { children: ReactNode; onClose: () => void; title?: string; footer?: ReactNode }) {
+  useDismiss(onClose);
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end">
+    <Portal>
+    <div className="fixed inset-0 z-[100] flex flex-col justify-end">
       <button aria-label="Close" onClick={onClose}
         className="fade-in absolute inset-0 bg-[rgba(16,20,19,0.42)] backdrop-blur-[2px]" />
       <div className="sheet-up relative mx-auto flex max-h-[88vh] w-full max-w-md flex-col overflow-hidden rounded-t-[var(--radius-2xl)] bg-white shadow-[var(--shadow-lg)]">
@@ -205,6 +277,7 @@ export function Sheet({
         {footer && <div className="border-t border-[var(--color-line)] bg-white px-5 pb-[max(20px,env(safe-area-inset-bottom))] pt-4">{footer}</div>}
       </div>
     </div>
+    </Portal>
   );
 }
 

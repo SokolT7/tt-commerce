@@ -10,7 +10,7 @@ import { TerminalMap } from "@/components/TerminalMap";
 import {
   Button, Pill, Monogram, Notice, EmptyState, SkeletonList,
   IconOrders, IconStore, IconClock, IconAlert, IconRobot, IconPin,
-  IconCheck, IconLock, IconPlane, IconSparkle,
+  IconCheck, IconLock, IconPlane, IconSparkle, Modal,
 } from "@/components/ui";
 
 type Tab = "overview" | "orders" | "shops" | "ops" | "terminal";
@@ -428,29 +428,24 @@ function TermsEditor({ shop, onClose, onDone }: { shop: ShopStat; onClose: () =>
   const field = "mt-1.5 w-full rounded-[var(--radius-md)] border border-[var(--color-line)] bg-white px-3.5 py-2.5 text-[15px] tnum outline-none focus:border-[var(--color-accent)]";
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center p-5">
-      <button aria-label="Cancel" onClick={onClose} className="fade-in absolute inset-0 bg-[rgba(16,20,19,0.42)] backdrop-blur-[2px]" />
-      <div className="pop relative w-full max-w-sm rounded-[var(--radius-xl)] bg-white p-6 shadow-[var(--shadow-lg)]">
-        <h2 className="headline text-[19px] font-semibold">{shop.name}</h2>
-        <p className="mt-1 text-[13.5px] text-[var(--color-ink-2)]">Commercial terms for this outlet.</p>
-
-        <label className="mt-5 block">
-          <span className="label">Commission (%)</span>
-          <input value={rate} onChange={(e) => setRate(e.target.value)} inputMode="decimal" className={field} />
-        </label>
-        <label className="mt-3.5 block">
-          <span className="label">Default prep time (minutes)</span>
-          <input value={prep} onChange={(e) => setPrep(e.target.value)} inputMode="numeric" className={field} />
-        </label>
-
-        {err && <div className="mt-4"><Notice tone="alert" title="Not saved" icon={<IconAlert size={16} />}>{err}</Notice></div>}
-
-        <div className="mt-6 grid grid-cols-2 gap-2.5">
+    <Modal title={shop.name} onClose={onClose}
+      description="Commercial terms for this outlet."
+      footer={
+        <div className="grid grid-cols-2 gap-2.5">
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           <Button loading={busy} onClick={save}>Save</Button>
         </div>
-      </div>
-    </div>
+      }>
+      <label className="block">
+        <span className="label">Commission (%)</span>
+        <input value={rate} onChange={(e) => setRate(e.target.value)} inputMode="decimal" className={field} />
+      </label>
+      <label className="mt-3.5 block">
+        <span className="label">Default prep time (minutes)</span>
+        <input value={prep} onChange={(e) => setPrep(e.target.value)} inputMode="numeric" className={field} />
+      </label>
+      {err && <div className="mt-4"><Notice tone="alert" title="Not saved" icon={<IconAlert size={16} />}>{err}</Notice></div>}
+    </Modal>
   );
 }
 
