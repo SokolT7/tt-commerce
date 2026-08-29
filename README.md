@@ -58,6 +58,39 @@ removed unless an order references them.
 
 Run `npm run test:fids` to exercise the mapping — 28 assertions, no network.
 
+
+### Live flight data (Cirium / FlightStats FIDS)
+
+Credentials come from developer.flightstats.com → **My Account → Applications**.
+Each application has its own Application ID and Application Key, and the FIDS
+API must be enabled for it.
+
+Put them in `.env.local`, then check they work:
+
+```bash
+node scripts/test-fids.mjs
+```
+
+It reads the keys from the file, calls the live board, and prints the
+departures it found. The key itself is never printed — only a masked
+fingerprint — so the output is safe to share.
+
+Once that succeeds, **Terminal → Sync live board** in the operations dashboard
+pulls the board into the database. To see what the mapping produces without
+writing anything:
+
+```bash
+curl -s -X POST "http://localhost:3000/api/v1/fids/sync?dryRun=1"
+```
+
+With the keys blank the seeded board stays in use, so nothing breaks.
+
+> FIDS publishes departure times, never boarding times, and the acceptance
+> engine works against boarding. Boarding is derived by subtracting
+> `FIDS_BOARDING_LEAD_MINUTES` (default 35) from scheduled gate departure.
+> That is an assumption — set it to MZLZ's actual gate-closure policy, because
+> it decides which orders get refused.
+
 ## Signing in
 
 | Surface | URL | Account |
