@@ -86,7 +86,8 @@ export interface QuoteResult {
 export async function quote(params: {
   merchantId: string;
   lines: CartLineInput[];
-  flightId: string;
+  /** Optional: omitted while live flight data is unavailable. */
+  flightId?: string | null;
   location: LocationInput;
 }): Promise<QuoteResult> {
   const db = createAdminClient();
@@ -96,8 +97,13 @@ export async function quote(params: {
 
   const merchant = merchants.find((m) => m.id === params.merchantId);
   if (!merchant) throw new Error("Unknown shop");
-  const flight = flights.find((f) => f.id === params.flightId);
-  if (!flight) throw new Error("Unknown flight");
+  // A quote without a flight is legitimate; a quote naming a flight we do not
+  // have is not, because the promise would silently lose its deadline.
+  let flight = null as (typeof flights)[number] | null;
+  if (params.flightId) {
+    flight = flights.find((f) => f.id === params.flightId) ?? null;
+    if (!flight) throw new Error("Unknown flight");
+  }
 
   const zoneId = await zoneForLocation(params.location);
   const zone = zones.find((z) => z.id === zoneId);
@@ -167,7 +173,14 @@ export async function quote(params: {
         toCustomerSeconds: result.promise.toCustomerSeconds,
         handoverBufferSeconds: result.promise.handoverBufferSeconds,
         walkMetres: location.walkMetres,
-        gateAtQuoteTime: result.promise.gateAtQuoteTime,
+        // Recorded only when a flight was known, so the stored promise shows
+        // whether it ever had a boarding deadline to protect.
+        ...(result.promise.gateAtQuoteTime !== null
+          ? { gateAtQuoteTime: result.promise.gateAtQuoteTime }
+          : {}),
+        ...(result.promise.boardingAtQuoteTime !== null
+          ? { boardingAtQuoteTime: result.promise.boardingAtQuoteTime }
+          : {}),
       },
     },
     lines,
@@ -185,7 +198,7 @@ async function nearestFreeUnitWaypoint(zone: ZoneId): Promise<string | null> {
 export async function placeOrder(params: {
   merchantId: string;
   lines: CartLineInput[];
-  flightId: string;
+  flightId?: string | null;
   location: LocationInput;
   customerId: string | null;
   passengerName?: string;
@@ -199,7 +212,7 @@ export async function placeOrder(params: {
     payload: {
       customer_id: params.customerId,
       merchant_id: params.merchantId,
-      flight_id: params.flightId,
+      flight_id: params.flightId ?? null,
       passenger_name: params.passengerName ?? "",
       location_kind: params.location.kind,
       seat_id: params.location.seatId ?? null,

@@ -91,11 +91,35 @@ With the keys blank the seeded board stays in use, so nothing breaks.
 > That is an assumption — set it to MZLZ's actual gate-closure policy, because
 > it decides which orders get refused.
 
+
+### Surfaces are not linked to each other
+
+The root is the passenger app and nothing else. Staff surfaces are reachable
+only by direct link:
+
+- **Shop owners** get `/merchant/<slug>` — signing in there lands them on their
+  own shop. `/merchant` shows only the shops that account actually runs.
+- **Administrators** go to `/admin`.
+
+Neither is advertised from the passenger app.
+
+### Flight selection is on hold
+
+Choosing a flight is removed until the FlightStats account is approved. The
+acceptance engine still runs, but with no boarding time to protect it quotes a
+delivery estimate ("arrives in about 9 min") instead of a margin before
+boarding, and refuses only for reasons it can still see — an unreachable route
+or an unserved zone. A quote naming a flight that does not exist is still
+rejected, so a deadline can never be lost silently.
+
+Restoring it is a UI change plus passing `flightId` again; the server already
+accepts it.
+
 ## Signing in
 
 | Surface | URL | Account |
 |---|---|---|
-| Passenger app | `/order` | none — anonymous session |
+| Passenger app | `/` | none — anonymous session |
 | Shop console | `/merchant/login` | `<slug>@shop.local` / `gatedelivery` |
 | Operations | `/admin/login` | `admin@gatedelivery.local` / `gatedelivery` |
 

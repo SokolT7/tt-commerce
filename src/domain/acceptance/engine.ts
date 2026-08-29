@@ -14,7 +14,13 @@ export type AcceptanceVerdict = "ACCEPT" | "WARN" | "REFUSE";
 
 export interface AcceptanceInput {
   now: number;
-  flight: Flight;
+  /**
+   * Null while live flight data is unavailable. Without a boarding time there
+   * is no deadline to protect, so the engine quotes a delivery estimate and
+   * only refuses for reasons it can still see — an unreachable route, or a
+   * zone that is not served.
+   */
+  flight: Flight | null;
   zone: Zone;
   merchant: Merchant;
   itemCount: number;
@@ -77,7 +83,11 @@ export function assess(input: AcceptanceInput): AcceptanceResult {
   const totalSeconds = untilLoaded + toCustomerSeconds + HANDOVER_BUFFER_SECONDS;
 
   const deliverBy = now + totalSeconds * 1000;
-  const promiseDeadline = flight.boardingAt - zone.safetyMarginMin * 60_000;
+  // No flight means no boarding deadline. The promise then bounds only the
+  // delivery itself, so a late delivery is still detectable.
+  const promiseDeadline = flight
+    ? flight.boardingAt - zone.safetyMarginMin * 60_000
+    : deliverBy + GRACE_SECONDS * 1000;
   const slackSeconds = Math.round((promiseDeadline - deliverBy) / 1000);
 
   const promise: Promise_ = {
@@ -89,8 +99,8 @@ export function assess(input: AcceptanceInput): AcceptanceResult {
     loadingSeconds: LOADING_SECONDS,
     toCustomerSeconds,
     handoverBufferSeconds: HANDOVER_BUFFER_SECONDS,
-    boardingAtQuoteTime: flight.boardingAt,
-    gateAtQuoteTime: flight.gate,
+    boardingAtQuoteTime: flight?.boardingAt ?? null,
+    gateAtQuoteTime: flight?.gate ?? null,
   };
 
   if (!Number.isFinite(toCustomerSeconds) || !Number.isFinite(toMerchantSeconds)) {
@@ -113,11 +123,14 @@ export function assess(input: AcceptanceInput): AcceptanceResult {
 
   if (slackSeconds >= 0) {
     const minutes = Math.round(slackSeconds / 60);
+    const eta = Math.max(1, Math.round(totalSeconds / 60));
     return {
       verdict: "ACCEPT",
       promise,
       slackSeconds,
-      reason: `Arrives about ${minutes} min before boarding.`,
+      reason: flight
+        ? `Arrives about ${minutes} min before boarding.`
+        : `Arrives in about ${eta} min.`,
     };
   }
 

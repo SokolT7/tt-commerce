@@ -40,6 +40,20 @@ export const IconAlert = svg(<><circle cx="12" cy="12" r="8.4" /><path d="M12 7.
 export const IconSparkle = svg(<path d="M12 4.4 13.6 9.4 18.6 11 13.6 12.6 12 17.6 10.4 12.6 5.4 11l5-1.6L12 4.4Z" />);
 export const IconRobot = svg(<><rect x="4.6" y="8" width="14.8" height="11.4" rx="3" /><path d="M12 8V5.2" /><circle cx="12" cy="4.2" r="1.2" fill="currentColor" stroke="none" /><path d="M9.4 13.2h.01M14.6 13.2h.01" strokeWidth={2.4} /></>);
 
+/* Category marks — same grid and stroke weight as the rest of the set. */
+export const IconCoffee = svg(<><path d="M5.4 8.6h11v6a4 4 0 0 1-4 4H9.4a4 4 0 0 1-4-4v-6Z" /><path d="M16.4 10.2h1.4a2.4 2.4 0 0 1 0 4.8h-1.4" /><path d="M8.2 4.4v1.8M11.4 4.4v1.8M14.6 4.4v1.8" /></>);
+export const IconFood = svg(<><path d="M6.6 4.6v6a2.4 2.4 0 0 0 4.8 0v-6" /><path d="M9 10.8V19.4" /><path d="M16.4 4.6c-1.4 1.2-2 3-2 5.2 0 1.6.7 2.6 2 2.9V19.4" /></>);
+export const IconCold = svg(<><path d="M7.4 6h9.2l-1 12.2a1.6 1.6 0 0 1-1.6 1.4h-4a1.6 1.6 0 0 1-1.6-1.4L7.4 6Z" /><path d="M7.9 11.4h8.2" /><path d="M9.6 3v3M14.4 3v3" /></>);
+export const IconSnack = svg(<><path d="M5.6 9.4h12.8l-1.2 9a1.8 1.8 0 0 1-1.8 1.6H8.6a1.8 1.8 0 0 1-1.8-1.6l-1.2-9Z" /><path d="M8.4 9.4 10 4.6M15.6 9.4 14 4.6" /></>);
+export const IconGift = svg(<><rect x="4.6" y="9.4" width="14.8" height="10.2" rx="1.8" /><path d="M4.6 13.2h14.8M12 9.4v10.2" /><path d="M12 9.4c-2.6 0-4-1-4-2.4S9.2 4.4 12 9.4Zm0 0c2.6 0 4-1 4-2.4S14.8 4.4 12 9.4Z" /></>);
+export const IconBeauty = svg(<><path d="M9.4 8.6h5.2v10a2 2 0 0 1-2 2h-1.2a2 2 0 0 1-2-2v-10Z" /><path d="M10.4 8.6V5.4a1.6 1.6 0 0 1 3.2 0v3.2" /><path d="M9.4 12.6h5.2" /></>);
+export const IconSpirit = svg(<><path d="M9.4 3.4h5.2v3.4l2.4 4.2v7a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-7l2.4-4.2V3.4Z" /><path d="M7 13.4h10" /></>);
+
+export const CATEGORY_ICONS: Record<string, (p: IconProps) => React.ReactElement> = {
+  coffee: IconCoffee, food: IconFood, cold: IconCold,
+  snack: IconSnack, gift: IconGift, beauty: IconBeauty, spirit: IconSpirit,
+};
+
 /* ==========================================================================
    Buttons
    ========================================================================== */

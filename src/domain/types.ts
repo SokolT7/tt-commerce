@@ -219,8 +219,9 @@ export interface Promise_ {
   loadingSeconds: number;
   toCustomerSeconds: number;
   handoverBufferSeconds: number;
-  boardingAtQuoteTime: number;
-  gateAtQuoteTime: string;
+  /** Null when the order was placed without flight information. */
+  boardingAtQuoteTime: number | null;
+  gateAtQuoteTime: string | null;
 }
 
 export interface Order {
