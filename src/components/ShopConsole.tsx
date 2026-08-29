@@ -168,13 +168,16 @@ function OpenToggle({ shop, onDone }: { shop: Shop; onDone: () => void }) {
   return (
     <button onClick={toggle} disabled={busy} role="switch" aria-checked={shop.open}
       aria-label={shop.open ? "Shop is open — tap to close" : "Shop is closed — tap to open"}
-      className="pressable-sm inline-flex items-center gap-2 rounded-full py-1.5 pl-2 pr-3 text-[13px] font-medium disabled:opacity-50"
+      className="pressable-sm inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full py-1.5 pl-2 pr-3 text-[13px] font-medium disabled:opacity-50"
       style={{ background: shop.open ? "var(--color-accent-soft)" : "var(--color-surface-2)",
                color: shop.open ? "var(--color-accent-ink)" : "var(--color-muted)" }}>
-      <span className="relative h-5 w-9 rounded-full transition-colors duration-200"
+      {/* The knob is pinned with an explicit inset. Left to its static
+          position it inherited an offset of its own, which the transform then
+          added to — putting it past the end of the track and over the label. */}
+      <span className="relative block h-5 w-9 shrink-0 rounded-full transition-colors duration-200"
             style={{ background: shop.open ? "var(--color-accent)" : "var(--color-line-strong)" }}>
-        <span className="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ease-[var(--ease-out)]"
-              style={{ transform: shop.open ? "translateX(18px)" : "translateX(2px)" }} />
+        <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ease-[var(--ease-out)]"
+              style={{ transform: shop.open ? "translateX(16px)" : "translateX(0)" }} />
       </span>
       {shop.open ? "Open" : "Closed"}
     </button>
